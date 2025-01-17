@@ -95,3 +95,14 @@ class ProcessPool:
         self.results.clear()
         self.errors.clear()
         logger.debug("Process pool cleaned up")
+        
+    def cleanup_completed(self):
+        """Remove completed processes from the pool"""
+        for process_id in list(self.processes.keys()):
+            process = self.processes[process_id]
+            if not process.is_alive():
+                # Process is done, clean it up
+                process.join()  # Ensure process is fully cleaned up
+                del self.processes[process_id]
+                logger.debug(f"Cleaned up completed process {process_id}")
+

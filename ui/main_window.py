@@ -135,12 +135,11 @@ class MainWindow:
         to_remove = []
         for widget_id, widget in list(self.downloads.items()):
             try:
-                if not widget.winfo_exists() or hasattr(widget, '_destroyed'):
+                if widget.is_completed:
                     to_remove.append(widget_id)
             except Exception:
-                # If we can't check widget existence, assume it's dead
-                to_remove.append(widget_id)
-                
+                continue
+            
         for widget_id in to_remove:
             self._remove_download_widget(widget_id)
             
@@ -250,21 +249,30 @@ class MainWindow:
             # Show audio progress bar for regular downloads
             widget.show_audio_progress()
             
-            # Start download process
-            process_id = self.process_pool.start_process(
-                FileDownloader.download,
-                args=(url, str(settings['download_folder']), progress_queue)
-            )
-            
-            # Store process ID in widget
-            self.active_downloads.add(process_id)
-            
-            # Start monitoring progress
-            threading.Thread(
-                target=self._monitor_download_progress,
-                args=(widget, process_id, progress_queue),
-                daemon=True
-            ).start()
+            try:
+                # Start download process
+                process_id = self.process_pool.start_process(
+                    FileDownloader.download,
+                    args=(url, str(settings['download_folder']), progress_queue)
+                )
+                
+                # Store process ID in widget
+                self.active_downloads.add(process_id)
+                
+                # Start monitoring progress
+                threading.Thread(
+                    target=self._monitor_download_progress,
+                    args=(widget, process_id, progress_queue),
+                    daemon=True
+                ).start()
+            except RuntimeError as e:
+                if "Maximum number of processes" in str(e):
+                    self.pending_downloads.append((url, settings.copy()))
+                    widget.set_status("Queued - waiting for available slot...")
+                    logger.debug(f"Queued download for later: {url}")
+                    self.root.after(1000, self._check_pending_downloads)
+                else:
+                    raise
             
         except Exception as e:
             logger.error(f"Download error: {str(e)}", exc_info=True)
@@ -304,21 +312,31 @@ class MainWindow:
             if not audio_only:
                 widget.show_video_progress()  # Only show video progress if not audio-only
             
-            # Start download process
-            process_id = self.process_pool.start_process(
-                YouTubeDownloader.download_process,
-                args=(url, dest_folder, video_quality, audio_quality, audio_only, progress_queue)
-            )
-            
-            # Store process ID in widget
-            self.active_downloads.add(process_id)
-            
-            # Start monitoring progress
-            threading.Thread(
-                target=self._monitor_youtube_progress,
-                args=(widget, process_id, progress_queue, not audio_only),
-                daemon=True
-            ).start()
+            try:
+                # Start download process
+                process_id = self.process_pool.start_process(
+                    YouTubeDownloader.download_process,
+                    args=(url, dest_folder, video_quality, audio_quality, audio_only, progress_queue)
+                )
+                
+                # Store process ID in widget
+                self.active_downloads.add(process_id)
+                
+                # Start monitoring progress
+                threading.Thread(
+                    target=self._monitor_youtube_progress,
+                    args=(widget, process_id, progress_queue, not audio_only),
+                    daemon=True
+                ).start()
+            except RuntimeError as e:
+                if "Maximum number of processes" in str(e):
+                    self.pending_downloads.append((url, settings.copy()))
+                    widget.set_status("Queued - waiting for available slot...")
+                    logger.debug(f"Queued download for later: {url}")
+                    self.root.after(1000, self._check_pending_downloads)
+                    return  # Return early to avoid outer exception handler
+                else:
+                    raise
             
         except Exception as e:
             logger.error(f"Failed to start YouTube download: {str(e)}", exc_info=True)
@@ -354,6 +372,9 @@ class MainWindow:
                         return
                     elif progress['type'] == 'complete':
                         logger.info("Download completed successfully")
+                        widget.is_completed = True  # Set completed flag when final file is saved
+                        widget.is_cancelled = True  # Enable clear button
+                        widget.cancel_btn.configure(text="Clear")
                         widget.set_status("Download complete!")
                         self.active_downloads.remove(process_id)
                         # Check pending downloads
@@ -404,6 +425,9 @@ class MainWindow:
                             data['total']
                         )
                     elif progress['type'] == 'complete':
+                        widget.is_completed = True  # Set completed flag when file is saved
+                        widget.is_cancelled = True  # Enable clear button
+                        widget.cancel_btn.configure(text="Clear")
                         widget.set_status("Download complete!")
                         self.active_downloads.remove(process_id)
                         # Check pending downloads
@@ -443,7 +467,13 @@ class MainWindow:
             
     def _check_pending_downloads(self):
         """Check if there are pending downloads that can be started"""
-        while len(self.active_downloads) < self.process_pool.max_processes and self.pending_downloads:
+        # Clean up completed processes first
+        self.process_pool.cleanup_completed()
+        
+        # Now check how many active processes we have
+        active_processes = len([p for p in self.process_pool.processes.values() if p.is_alive()])
+
+        while active_processes < self.process_pool.max_processes and self.pending_downloads:
             url, settings = self.pending_downloads.pop(0)
             try:
                 if is_youtube_url(url):
@@ -453,7 +483,10 @@ class MainWindow:
             except Exception as e:
                 logger.error(f"Error starting pending download {url}: {str(e)}", exc_info=True)
                 messagebox.showerror("Error", f"Failed to start download: {str(e)}")
-        
+            
+            # Recalculate active processes after starting a download
+            active_processes = len([p for p in self.process_pool.processes.values() if p.is_alive()])
+
         # Schedule next check if there are still pending downloads
         if self.pending_downloads:
             self.root.after(1000, self._check_pending_downloads)

@@ -10,6 +10,7 @@ import uuid
 from utils.exceptions import YouTubeError, FFmpegError, DownloadError
 from utils.logger import Logger
 import unicodedata
+from .utils import ensure_unique_path
 
 logger = Logger.get_instance()
 
@@ -452,13 +453,14 @@ class YouTubeDownloader:
                     raise DownloadError("Download process failed")
             
             # Merge files if needed
-            output_path = os.path.join(dest_folder, f"{clean_filename(info['title'])}.mp4")
+            base_output_path = Path(dest_folder) / f"{clean_filename(info['title'])}.mp4"
+            output_path = ensure_unique_path(base_output_path)
             if not audio_only:
                 logger.info(f"Merging files to: {output_path}")
-                YouTubeDownloader.mux_files(video_temp, audio_temp, output_path, progress_queue)
+                YouTubeDownloader.mux_files(video_temp, audio_temp, str(output_path), progress_queue)
             else:
                 # For audio only, just rename the temp file
-                os.rename(audio_temp, output_path)
+                os.rename(audio_temp, str(output_path))
                 progress_queue.put({
                     'type': 'complete'
                 })

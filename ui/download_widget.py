@@ -23,6 +23,7 @@ class DownloadWidget(ctk.CTkFrame):
         self.on_cancel = on_cancel
         self.on_clear = on_clear
         self.is_cancelled = False
+        self.is_completed = False  # Initialize is_completed attribute
         self.id = str(uuid.uuid4())  # Generate unique ID for this widget
         
         # Create main content frame
@@ -141,7 +142,7 @@ class DownloadWidget(ctk.CTkFrame):
     def set_status(self, status: str):
         """Update status text"""
         self.status_label.configure(text=status)
-        if status in ["Download complete!", "Download cancelled", "Error:"]:
+        if status.startswith("Error:"):
             self.is_cancelled = True
             self.cancel_btn.configure(text="Clear")
             

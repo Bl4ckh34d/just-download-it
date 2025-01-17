@@ -9,11 +9,15 @@ import multiprocessing as mp
 import uuid
 from utils.exceptions import YouTubeError, FFmpegError, DownloadError
 from utils.logger import Logger
+import unicodedata
 
 logger = Logger.get_instance()
 
 def clean_filename(filename: str) -> str:
-    """Clean filename from invalid characters"""
+    """Clean filename from invalid characters and normalize Unicode characters"""
+    # Normalize Unicode characters (NFKD form converts special characters to their ASCII equivalents where possible)
+    filename = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('ascii')
+
     # Characters not allowed in Windows filenames
     invalid_chars = r'<>:"/\|?*'
     # Replace invalid characters with underscore
@@ -379,7 +383,9 @@ class YouTubeDownloader:
             # Get video info first
             logger.debug("Fetching video info...")
             info = get_video_info(url)
-            logger.info(f"Video title: {info.get('title', 'Unknown')}")
+            title = info.get('title', 'Unknown')
+            clean_title = clean_filename(title)  # Clean the title before logging
+            logger.info(f"Video title: {clean_title}")
             
             # Create unique temporary filenames
             video_temp = None if audio_only else os.path.join(dest_folder, f"video_{uuid.uuid4()}.mp4")

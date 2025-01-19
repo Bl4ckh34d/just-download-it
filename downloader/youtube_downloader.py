@@ -145,129 +145,6 @@ def handle_progress(d: dict, queue: Optional[Queue]):
     except Exception as e:
         logger.error(f"Error handling progress: {str(e)}")
 
-def mux_files(
-    video_path: Optional[str],
-    audio_path: str,
-    output_path: str,
-    progress_queue: Optional[Any] = None,
-    cancel_event: Event = None
-):
-    """Mux video and audio files using ffmpeg"""
-    try:
-        # Update progress
-        if progress_queue:
-            progress_queue.put({
-                'type': 'muxing_progress',
-                'data': {'progress': 0, 'status': 'Starting muxing...'}
-            })
-        
-        if video_path:
-            # Mux video and audio
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', video_path,
-                '-i', audio_path,
-                '-c', 'copy',
-                output_path
-            ]
-            logger.debug(f"Running FFmpeg command: {' '.join(cmd)}")
-        else:
-            # Audio only, just copy
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', audio_path,
-                '-c', 'copy',
-                output_path
-            ]
-            logger.debug(f"Running FFmpeg command: {' '.join(cmd)}")
-            
-        # Run ffmpeg
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True
-        )
-        
-        # Monitor progress
-        duration = None
-        time_position = 0
-        stderr_output = []
-        
-        while True:
-            line = process.stderr.readline()
-            if not line:
-                break
-                
-            # Store stderr output for error reporting
-            stderr_output.append(line)
-            
-            # Try to get duration if we don't have it
-            if not duration and "Duration:" in line:
-                try:
-                    duration_str = line.split("Duration:")[1].split(",")[0].strip()
-                    h, m, s = map(float, duration_str.split(":"))
-                    duration = h * 3600 + m * 60 + s
-                    logger.debug(f"Detected duration: {duration}s")
-                except Exception as e:
-                    logger.warning(f"Failed to parse duration: {e}")
-                    
-            # Try to get current position
-            if "time=" in line:
-                try:
-                    time_str = line.split("time=")[1].split()[0].strip()
-                    h, m, s = map(float, time_str.split(":"))
-                    time_position = h * 3600 + m * 60 + s
-                    
-                    if duration:
-                        progress = (time_position / duration) * 100
-                        if progress_queue:
-                            progress_queue.put({
-                                'type': 'muxing_progress',
-                                'data': {
-                                    'progress': min(progress, 100),
-                                    'status': f'Processing... {progress:.1f}%'
-                                }
-                            })
-                        logger.debug(f"Muxing progress: {progress:.1f}%")
-                except Exception as e:
-                    logger.warning(f"Failed to parse time position: {e}")
-                    
-            # Check for cancellation
-            if cancel_event.is_set():
-                process.terminate()
-                raise Exception("Muxing cancelled")
-                    
-        # Wait for process to finish
-        process.wait()
-        
-        # Check if successful
-        if process.returncode == 0:
-            if progress_queue:
-                progress_queue.put({
-                    'type': 'muxing_progress',
-                    'data': {'progress': 100, 'status': 'Muxing complete'}
-                })
-                progress_queue.put({'type': 'complete'})
-            # Clean up temporary files
-            if video_path:
-                os.remove(video_path)
-            os.remove(audio_path)
-            logger.info("Muxing completed successfully")
-        else:
-            error = '\n'.join(stderr_output)
-            logger.error(f"FFmpeg failed with return code {process.returncode}. Error output:\n{error}")
-            raise FFmpegError(f"FFmpeg failed with code {process.returncode}: {error}")
-            
-    except Exception as e:
-        logger.error(f"Muxing failed: {str(e)}", exc_info=True)
-        if progress_queue:
-            progress_queue.put({
-                'type': 'error',
-                'error': str(e)
-            })
-        raise
-
 class YouTubeDownloader:
     # Video format codes mapping
     VIDEO_FORMATS = {
@@ -293,8 +170,103 @@ class YouTubeDownloader:
     
     get_video_info = staticmethod(get_video_info)
     download_video = staticmethod(download_video)
-    mux_files = staticmethod(mux_files)
-    clean_filename = staticmethod(clean_filename)
+    
+    @staticmethod
+    def mux_files(
+        video_path: Optional[str],
+        audio_path: str,
+        output_path: str,
+        progress_queue: Optional[Any] = None,
+        cancel_event: Event = None
+    ):
+        """Mux video and audio files using ffmpeg"""
+        try:
+            # Check if already cancelled
+            if cancel_event and cancel_event.is_set():
+                logger.info("Muxing cancelled before starting")
+                return
+                
+            # Prepare ffmpeg command
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-y',  # Overwrite output file if exists
+                '-i', audio_path
+            ]
+            
+            if video_path:
+                ffmpeg_cmd.extend(['-i', video_path])
+                ffmpeg_cmd.extend([
+                    '-c:v', 'copy',  # Copy video stream without re-encoding
+                    '-c:a', 'copy'   # Copy audio stream without re-encoding
+                ])
+            else:
+                ffmpeg_cmd.extend([
+                    '-c:a', 'copy'   # Copy audio stream without re-encoding
+                ])
+                
+            ffmpeg_cmd.append(output_path)
+            
+            # Start ffmpeg process
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Monitor process output
+            while True:
+                # Check for cancellation
+                if cancel_event and cancel_event.is_set():
+                    logger.info("Muxing cancelled during process")
+                    process.terminate()
+                    process.wait(timeout=1)  # Wait for process to terminate
+                    # Clean up output file if it exists
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                    return
+                    
+                # Read ffmpeg output
+                line = process.stderr.readline()
+                if not line and process.poll() is not None:
+                    break
+                    
+                # Try to parse progress
+                if progress_queue and "time=" in line:
+                    try:
+                        time_str = line.split("time=")[1].split()[0]
+                        time_parts = time_str.split(":")
+                        seconds = float(time_parts[0]) * 3600 + float(time_parts[1]) * 60 + float(time_parts[2])
+                        
+                        # Get total duration from file
+                        if not hasattr(mux_files, 'total_duration'):
+                            probe_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audio_path]
+                            total_duration = float(subprocess.check_output(probe_cmd, universal_newlines=True).strip())
+                            setattr(mux_files, 'total_duration', total_duration)
+                            
+                        # Calculate progress percentage
+                        progress = (seconds / mux_files.total_duration) * 100
+                        progress_queue.put({
+                            'type': 'progress',
+                            'data': {
+                                'status': 'muxing',
+                                'progress': progress
+                            }
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to parse time position: {e}")
+                        
+            # Check process return code
+            if process.returncode != 0:
+                error_output = process.stderr.read()
+                raise FFmpegError(f"FFmpeg failed with error: {error_output}")
+                
+        except Exception as e:
+            logger.error(f"Error during muxing: {str(e)}", exc_info=True)
+            # Clean up output file if it exists
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            raise
     
     @staticmethod
     def get_playlist_urls(url: str) -> list[str]:
@@ -399,7 +371,7 @@ class YouTubeDownloader:
     @staticmethod
     def download_process(
         url: str,
-        dest_folder: str,
+        download_folder: str,
         video_quality: str,
         audio_quality: str,
         audio_only: bool,
@@ -409,59 +381,40 @@ class YouTubeDownloader:
         """Standalone process for downloading YouTube videos"""
         try:
             logger.info(f"Starting YouTube download process for {url}")
-            logger.debug(f"Settings - Quality: {video_quality}, Audio: {audio_quality}, Audio Only: {audio_only}")
             
-            # Get video info first and send title to update widget
-            logger.debug("Fetching video info...")
-            info = get_video_info(url)
-            title = info.get('title', 'Unknown')
-            clean_title = clean_filename(title)
+            # Get video info
+            with yt_dlp.YoutubeDL() as ydl:
+                info = ydl.extract_info(url, download=False)
             
-            # Send title to update widget
-            progress_queue.put({
-                'type': 'title',
-                'title': clean_title
-            })
+            # Create temp directory for downloads
+            temp_dir = Path(download_folder) / ".temp"
+            temp_dir.mkdir(exist_ok=True)
             
-            # Create unique temporary filenames
-            video_temp = None if audio_only else os.path.join(dest_folder, f"video_{uuid.uuid4()}.mp4")
-            audio_temp = os.path.join(dest_folder, f"audio_{uuid.uuid4()}.m4a")
-            logger.debug(f"Temp files - Video: {video_temp}, Audio: {audio_temp}")
+            # Set up queues for progress monitoring
+            video_queue = mp.Queue() if not audio_only else None
+            audio_queue = mp.Queue()
             
-            # Get target height from video quality
-            target_height = int(video_quality.split('p')[0]) if 'p' in video_quality else 0
-            logger.debug(f"Target height: {target_height}p")
+            # Create unique temp filenames
+            video_temp = None if audio_only else temp_dir / f"video_{uuid.uuid4()}.mp4"
+            audio_temp = temp_dir / f"audio_{uuid.uuid4()}.m4a"
             
-            # Get target audio bitrate
-            target_bitrate = {
-                "High (opus)": 160,
-                "High (m4a)": 128,
-                "Medium (opus)": 128,
-                "Medium (m4a)": 96,
-                "Low (opus)": 96,
-                "Low (m4a)": 64
-            }.get(audio_quality, 128)
-            logger.debug(f"Target audio bitrate: {target_bitrate}k")
-            
-            # Configure audio download options
-            audio_opts = {
-                'format': f'bestaudio[abr<={target_bitrate}][ext=m4a]',
-                'outtmpl': {'default': audio_temp},
+            # Create video options if needed
+            video_opts = None if audio_only else {
+                'format': f'bestvideo[height<={video_quality}][ext=mp4]',
+                'outtmpl': str(video_temp),
                 'quiet': True,
                 'no_warnings': True
             }
             
-            # Configure video download options
-            video_opts = None
-            if not audio_only:
-                video_opts = {
-                    'format': f'bestvideo[height<={target_height}][ext=mp4]',
-                    'outtmpl': {'default': video_temp},
-                    'quiet': True,
-                    'no_warnings': True
-                }
+            # Create audio options
+            audio_opts = {
+                'format': 'bestaudio[ext=m4a]',
+                'outtmpl': str(audio_temp),
+                'quiet': True,
+                'no_warnings': True
+            }
             
-            # Start downloads in parallel
+            # Start processes list
             processes = []
             
             # Start audio download
@@ -480,19 +433,56 @@ class YouTubeDownloader:
                 )
                 video_process.start()
                 processes.append(video_process)
-            
-            # Wait for all downloads to complete
-            for p in processes:
-                p.join()
-                if p.exitcode != 0:
-                    raise DownloadError("Download process failed")
-            
-            # Merge files if needed
-            base_output_path = Path(dest_folder) / f"{clean_title}.mp4"
+                
+            # Wait for downloads to complete
+            for process in processes:
+                process.join()
+                if process.exitcode != 0:
+                    # Clean up temp files
+                    if video_temp and video_temp.exists():
+                        video_temp.unlink()
+                    if audio_temp.exists():
+                        audio_temp.unlink()
+                    return  # Exit early if any process failed
+                    
+            # Check for cancellation before muxing
+            if cancel_event.is_set():
+                # Clean up temp files
+                if video_temp and video_temp.exists():
+                    video_temp.unlink()
+                if audio_temp.exists():
+                    audio_temp.unlink()
+                progress_queue.put({
+                    'type': 'cancelled',
+                    'message': 'Download cancelled'
+                })
+                return
+                
+            # Create output path
+            title = info.get('title', url)
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            base_output_path = Path(download_folder) / f"{safe_title}.mp4"
             output_path = ensure_unique_path(base_output_path)
+            
+            # Mux files if needed
             if not audio_only:
                 logger.info(f"Merging files to: {output_path}")
-                YouTubeDownloader.mux_files(video_temp, audio_temp, str(output_path), progress_queue, cancel_event)
+                try:
+                    YouTubeDownloader.mux_files(video_temp, audio_temp, str(output_path), progress_queue, cancel_event)
+                except Exception as e:
+                    if str(e) == "Muxing cancelled":
+                        progress_queue.put({
+                            'type': 'cancelled',
+                            'message': 'Download cancelled'
+                        })
+                    else:
+                        raise
+                finally:
+                    # Clean up temp files
+                    if video_temp and video_temp.exists():
+                        video_temp.unlink()
+                    if audio_temp.exists():
+                        audio_temp.unlink()
             else:
                 # For audio only, just rename the temp file
                 os.rename(audio_temp, str(output_path))
@@ -501,7 +491,7 @@ class YouTubeDownloader:
                 })
             
         except Exception as e:
-            if str(e) == "Download cancelled":
+            if isinstance(e, YouTubeError) and "Download cancelled" in str(e):
                 progress_queue.put({
                     'type': 'cancelled',
                     'message': 'Download cancelled'
@@ -513,8 +503,13 @@ class YouTubeDownloader:
                     'type': 'error',
                     'error': error_msg
                 })
-                raise YouTubeError(error_msg)
             
+            # Clean up temp files
+            if 'video_temp' in locals() and video_temp and video_temp.exists():
+                video_temp.unlink()
+            if 'audio_temp' in locals() and audio_temp and audio_temp.exists():
+                audio_temp.unlink()
+    
     @staticmethod
     def monitor_progress(progress_queue: Any, video_queue: Any = None, audio_queue: Any = None, cancel_event: Event = None) -> None:
         """Monitor download progress and forward to main queue"""
@@ -547,3 +542,19 @@ class YouTubeDownloader:
                 'type': 'error',
                 'error': str(e)
             })
+
+    @staticmethod
+    def clean_filename(filename: str) -> str:
+        """Clean filename from invalid characters and normalize Unicode characters"""
+        # Normalize Unicode characters (NFKD form converts special characters to their ASCII equivalents where possible)
+        filename = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('ascii')
+
+        # Characters not allowed in Windows filenames
+        invalid_chars = r'<>:"/\|?*'
+        # Replace invalid characters with underscore
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
+        # Remove any leading/trailing spaces and dots
+        filename = filename.strip('. ')
+        # Limit length to avoid potential issues
+        return filename[:200]

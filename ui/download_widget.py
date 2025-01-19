@@ -26,6 +26,7 @@ class DownloadWidget(ctk.CTkFrame):
         self.is_completed = False  # Initialize is_completed attribute
         self.on_cancel = on_cancel
         self.on_clear = on_clear
+        self.is_destroyed = False  # Track if widget is destroyed
         
         # Create main content frame
         content = ctk.CTkFrame(self)
@@ -110,57 +111,89 @@ class DownloadWidget(ctk.CTkFrame):
         
     def show_video_progress(self):
         """Show video progress bar"""
-        self.video_frame.pack(fill="x", pady=2)
-        
+        if not self.is_destroyed:
+            self.video_frame.pack(fill="x", pady=2)
+            
     def show_audio_progress(self):
         """Show audio progress bar"""
-        self.audio_frame.pack(fill="x", pady=2)
-        
+        if not self.is_destroyed:
+            self.audio_frame.pack(fill="x", pady=2)
+            
     def show_muxing_progress(self):
         """Show muxing progress bar and hide video/audio progress"""
-        self.video_frame.pack_forget()
-        self.audio_frame.pack_forget()
-        self.muxing_frame.pack(fill="x", pady=2)
-        
+        if not self.is_destroyed:
+            self.video_frame.pack_forget()
+            self.audio_frame.pack_forget()
+            self.muxing_frame.pack(fill="x", pady=2)
+            
     def update_video_progress(self, progress: float, speed: str = "", downloaded: str = "", total: str = ""):
         """Update video download progress"""
-        self.video_progress.set(progress / 100)
-        if speed and downloaded and total:
-            self.video_label.configure(text=f"{downloaded}/{total} ({speed})")
-        
+        if not self.is_destroyed and self.winfo_exists():
+            try:
+                self.video_progress.set(progress / 100)
+                if speed and downloaded and total:
+                    self.video_label.configure(text=f"{downloaded}/{total} ({speed})")
+            except Exception:
+                pass  # Ignore errors if widget is being destroyed
+            
     def update_audio_progress(self, progress: float, speed: str = "", downloaded: str = "", total: str = ""):
         """Update audio download progress"""
-        self.audio_progress.set(progress / 100)
-        if speed and downloaded and total:
-            self.audio_label.configure(text=f"{downloaded}/{total} ({speed})")
-        
+        if not self.is_destroyed and self.winfo_exists():
+            try:
+                self.audio_progress.set(progress / 100)
+                if speed and downloaded and total:
+                    self.audio_label.configure(text=f"{downloaded}/{total} ({speed})")
+            except Exception:
+                pass  # Ignore errors if widget is being destroyed
+            
     def update_muxing_progress(self, progress: float, status: str = ""):
         """Update muxing progress"""
-        self.muxing_progress.set(progress / 100)
-        if status:
-            self.muxing_label.configure(text=status)
-        
+        if not self.is_destroyed and self.winfo_exists():
+            try:
+                self.muxing_progress.set(progress / 100)
+                if status:
+                    self.muxing_label.configure(text=status)
+            except Exception:
+                pass  # Ignore errors if widget is being destroyed
+            
     def update_title(self, title: str):
         """Update the widget's title"""
-        self.title_label.configure(text=title)
-        
+        if not self.is_destroyed and self.winfo_exists():
+            try:
+                self.title_label.configure(text=title)
+            except Exception:
+                pass  # Ignore errors if widget is being destroyed
+            
     def set_status(self, status: str):
         """Update status text"""
-        self.status_label.configure(text=status)
-        if status.startswith("Error:"):
-            self.is_cancelled = True
-            self.cancel_btn.configure(text="Clear")
+        if not self.is_destroyed and self.winfo_exists():
+            try:
+                self.status_label.configure(text=status)
+                if status.startswith("Error:"):
+                    self.is_cancelled = True
+                    self.cancel_btn.configure(text="Clear")
+            except Exception:
+                pass  # Ignore errors if widget is being destroyed
             
     def _on_button_click(self):
         """Handle button click based on current state"""
-        if not self.is_cancelled:
-            # Cancel the download
-            if self.on_cancel:
-                self.on_cancel()
-            self.is_cancelled = True
-            self.cancel_btn.configure(text="Clear")
-        else:
-            # Clear the widget
-            if self.on_clear:
-                self.on_clear()
-            self.destroy()
+        if not self.is_destroyed and self.winfo_exists():
+            try:
+                if not self.is_cancelled:
+                    # Cancel the download
+                    if self.on_cancel:
+                        self.on_cancel()
+                    self.is_cancelled = True
+                    self.cancel_btn.configure(text="Clear")
+                else:
+                    # Clear the widget
+                    if self.on_clear:
+                        self.on_clear()
+                    self.destroy()
+            except Exception:
+                pass  # Ignore errors if widget is being destroyed
+                
+    def destroy(self):
+        """Override destroy to mark widget as destroyed"""
+        self.is_destroyed = True
+        super().destroy()

@@ -48,6 +48,125 @@ def get_video_info(url: str) -> Dict[str, Any]:
         except Exception as e:
             raise YouTubeError(f"Failed to get video info: {str(e)}")
 
+def find_best_matching_resolution(formats: list, target_height: int) -> int:
+    """
+    Find the best matching resolution from available formats, considering both higher and lower resolutions.
+    Returns the height of the best matching format.
+    """
+    # Extract all available heights from formats
+    available_heights = set()
+    for fmt in formats:
+        if fmt.get('height') and fmt.get('vcodec') != 'none':
+            available_heights.add(fmt['height'])
+    
+    if not available_heights:
+        raise YouTubeError("No video formats found")
+    
+    available_heights = sorted(list(available_heights))
+    
+    # If target is lower than minimum available, return minimum
+    if target_height <= available_heights[0]:
+        return available_heights[0]
+    
+    # If target is higher than maximum available, return maximum
+    if target_height >= available_heights[-1]:
+        return available_heights[-1]
+    
+    # Find the closest resolution using alternating higher/lower check
+    lower_idx = 0
+    higher_idx = 0
+    
+    # Find the first height that's higher than target
+    for i, height in enumerate(available_heights):
+        if height > target_height:
+            higher_idx = i
+            lower_idx = i - 1
+            break
+    
+    while lower_idx >= 0 or higher_idx < len(available_heights):
+        # Check lower resolution
+        if lower_idx >= 0:
+            lower_diff = target_height - available_heights[lower_idx]
+            lower_match = available_heights[lower_idx]
+        else:
+            lower_diff = float('inf')
+            
+        # Check higher resolution
+        if higher_idx < len(available_heights):
+            higher_diff = available_heights[higher_idx] - target_height
+            higher_match = available_heights[higher_idx]
+        else:
+            higher_diff = float('inf')
+            
+        # Return the closest match
+        if lower_diff <= higher_diff:
+            return lower_match
+        else:
+            return higher_match
+    
+    # Fallback to the closest available resolution
+    return min(available_heights, key=lambda x: abs(x - target_height))
+
+def find_best_matching_audio_quality(formats: list, target_bitrate: int) -> Tuple[int, str]:
+    """
+    Find the best matching audio quality from available formats.
+    Returns a tuple of (bitrate, codec) of the best matching format.
+    """
+    # Extract all available audio formats with their bitrates
+    available_formats = []
+    for fmt in formats:
+        # Only consider audio formats
+        if fmt.get('acodec') != 'none' and fmt.get('abr'):
+            available_formats.append({
+                'abr': fmt['abr'],  # Average bitrate
+                'acodec': fmt['acodec'],
+                'ext': fmt.get('ext', '')
+            })
+    
+    if not available_formats:
+        raise YouTubeError("No audio formats found")
+    
+    # Sort formats by bitrate
+    available_formats.sort(key=lambda x: x['abr'])
+    available_bitrates = [fmt['abr'] for fmt in available_formats]
+    
+    # If target is lower than minimum available, return minimum
+    if target_bitrate <= available_bitrates[0]:
+        best_format = available_formats[0]
+        logger.info(f"Selected minimum available audio quality: {best_format['abr']}k {best_format['acodec']}")
+        return best_format['abr'], best_format['acodec']
+    
+    # If target is higher than maximum available, return maximum
+    if target_bitrate >= available_bitrates[-1]:
+        best_format = available_formats[-1]
+        logger.info(f"Selected maximum available audio quality: {best_format['abr']}k {best_format['acodec']}")
+        return best_format['abr'], best_format['acodec']
+    
+    # Find the closest bitrate using alternating higher/lower check
+    lower_idx = 0
+    higher_idx = 0
+    
+    # Find the first bitrate that's higher than target
+    for i, bitrate in enumerate(available_bitrates):
+        if bitrate > target_bitrate:
+            higher_idx = i
+            lower_idx = i - 1
+            break
+    
+    # Check lower quality
+    lower_diff = float('inf') if lower_idx < 0 else target_bitrate - available_bitrates[lower_idx]
+    # Check higher quality
+    higher_diff = float('inf') if higher_idx >= len(available_bitrates) else available_bitrates[higher_idx] - target_bitrate
+    
+    # Select the closest match
+    if lower_diff <= higher_diff and lower_idx >= 0:
+        best_format = available_formats[lower_idx]
+    else:
+        best_format = available_formats[higher_idx]
+    
+    logger.info(f"Selected audio quality: {best_format['abr']}k {best_format['acodec']} (requested: {target_bitrate}k)")
+    return best_format['abr'], best_format['acodec']
+
 def download_video(
     url: str,
     dest_folder: str,
@@ -70,7 +189,13 @@ def download_video(
         # Get target height from video quality
         target_height = int(video_quality.split('p')[0]) if 'p' in video_quality else 0
         
-        # Get target audio bitrate
+        if not audio_only and target_height > 0:
+            # Find best matching resolution
+            best_height = find_best_matching_resolution(info['formats'], target_height)
+            logger.info(f"Selected resolution: {best_height}p (requested: {target_height}p)")
+            target_height = best_height
+        
+        # Get target audio bitrate from quality setting
         target_bitrate = {
             "High (opus)": 160,
             "High (m4a)": 128,
@@ -80,11 +205,14 @@ def download_video(
             "Low (m4a)": 64
         }.get(audio_quality, 128)  # Default to 128k if not found
         
+        # Find best matching audio quality
+        best_bitrate, best_codec = find_best_matching_audio_quality(info['formats'], target_bitrate)
+        
         # Configure yt-dlp options
         if not audio_only:
             # Download video
             ydl_opts = {
-                'format': f'bestvideo[height<={target_height}][ext=mp4]+bestaudio[abr<={target_bitrate}][ext=m4a]',
+                'format': f'bestvideo[height<={target_height}][ext=mp4]+bestaudio[abr<={best_bitrate}][acodec={best_codec}]',
                 'outtmpl': {'video': video_temp, 'audio': audio_temp},
                 'progress_hooks': [
                     lambda d: handle_progress(d, video_queue if d['info_dict'].get('vcodec') != 'none' else audio_queue)
@@ -95,7 +223,7 @@ def download_video(
         else:
             # Download audio only
             ydl_opts = {
-                'format': f'bestaudio[abr<={target_bitrate}][ext=m4a]',
+                'format': f'bestaudio[abr<={best_bitrate}][acodec={best_codec}]',
                 'outtmpl': {'audio': audio_temp},
                 'progress_hooks': [lambda d: handle_progress(d, audio_queue)],
                 'quiet': True,

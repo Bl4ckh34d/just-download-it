@@ -186,6 +186,10 @@ class YouTubeDownloader:
                 logger.info("Muxing cancelled before starting")
                 return
                 
+            # Get total duration from file before starting
+            probe_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audio_path]
+            total_duration = float(subprocess.check_output(probe_cmd, universal_newlines=True).strip())
+                
             # Prepare ffmpeg command
             ffmpeg_cmd = [
                 'ffmpeg',
@@ -238,14 +242,8 @@ class YouTubeDownloader:
                         time_parts = time_str.split(":")
                         seconds = float(time_parts[0]) * 3600 + float(time_parts[1]) * 60 + float(time_parts[2])
                         
-                        # Get total duration from file
-                        if not hasattr(mux_files, 'total_duration'):
-                            probe_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audio_path]
-                            total_duration = float(subprocess.check_output(probe_cmd, universal_newlines=True).strip())
-                            setattr(mux_files, 'total_duration', total_duration)
-                            
                         # Calculate progress percentage
-                        progress = (seconds / mux_files.total_duration) * 100
+                        progress = (seconds / total_duration) * 100 if total_duration > 0 else 0
                         progress_queue.put({
                             'type': 'progress',
                             'data': {
@@ -254,7 +252,7 @@ class YouTubeDownloader:
                             }
                         })
                     except Exception as e:
-                        logger.warning(f"Failed to parse time position: {e}")
+                        logger.warning(f"Failed to parse time position: {str(e)}")
                         
             # Check process return code
             if process.returncode != 0:
@@ -399,12 +397,16 @@ class YouTubeDownloader:
             audio_temp = temp_dir / f"audio_{uuid.uuid4()}.m4a"
             
             # Create video options if needed
-            video_opts = None if audio_only else {
-                'format': f'bestvideo[height<={video_quality}][ext=mp4]',
-                'outtmpl': str(video_temp),
-                'quiet': True,
-                'no_warnings': True
-            }
+            video_opts = None
+            if not audio_only:
+                # Get target height from video quality
+                target_height = int(video_quality.split('p')[0]) if 'p' in video_quality else 0
+                video_opts = {
+                    'format': f'bestvideo[height<={target_height}][ext=mp4]',
+                    'outtmpl': str(video_temp),
+                    'quiet': True,
+                    'no_warnings': True
+                }
             
             # Create audio options
             audio_opts = {

@@ -168,7 +168,7 @@ class MainWindow:
         logger.debug("Creating download button")
         self.download_btn = ctk.CTkButton(
             main_frame,
-            text="Start Download",
+            text="Start Downloads",
             command=self._start_downloads
         )
         self.download_btn.pack(fill="x", padx=10, pady=10)
@@ -184,15 +184,39 @@ class MainWindow:
         
         ctk.CTkLabel(
             downloads_title,
-            text="Downloads",
+            text="  Active Downloads:",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(side="left", pady=5)
         
-        # Clear completed button
-        self.clear_btn = ctk.CTkButton(
-            downloads_title,
-            text="Clear Completed",
+        # Create button frame for right-aligned buttons
+        button_frame = ctk.CTkFrame(downloads_title)
+        button_frame.pack(side="right", padx=5)
+        
+        # Cancel All button (red)
+        self.cancel_all_btn = ctk.CTkButton(
+            button_frame,
+            text="Cancel All",
+            width=80,
+            fg_color="#b22222",  # dark red
+            hover_color="#8b0000",  # darker red
+            command=self._cancel_all_downloads
+        )
+        self.cancel_all_btn.pack(side="right", padx=5)
+        
+        # Cancel Queued button
+        self.cancel_queued_btn = ctk.CTkButton(
+            button_frame,
+            text="Cancel Queued",
             width=100,
+            command=self._cancel_queued_downloads
+        )
+        self.cancel_queued_btn.pack(side="right", padx=5)
+        
+        # Clear Completed button
+        self.clear_btn = ctk.CTkButton(
+            button_frame,
+            text="Clear Aborted/Completed",
+            width=140,
             command=self._clear_completed
         )
         self.clear_btn.pack(side="right", padx=5)
@@ -225,16 +249,34 @@ class MainWindow:
         
     def _clear_completed(self):
         """Clear completed downloads"""
-        to_remove = []
-        for widget_id, widget in list(self.downloads.items()):
-            try:
-                if widget.is_completed:
-                    to_remove.append(widget_id)
-            except Exception:
-                continue
-            
-        for widget_id in to_remove:
+        # Get list of completed downloads first to avoid modifying dict during iteration
+        to_clear = []
+        for widget_id, widget in self.downloads.items():
+            if widget.is_completed or widget.is_cancelled:
+                to_clear.append(widget_id)
+                
+        # Clear each completed/cancelled download
+        for widget_id in to_clear:
             self._remove_download_widget(widget_id)
+            
+    def _remove_download_widget(self, widget_id: str):
+        """Remove download widget"""
+        try:
+            if widget_id in self.downloads:
+                # Get widget and process ID
+                widget = self.downloads[widget_id]
+                process_id = widget.process_id
+                
+                # Remove widget from UI
+                widget.destroy()
+                del self.downloads[widget_id]
+                
+                # Clean up process if it exists
+                if process_id:
+                    self._clear_download(process_id)
+                    
+        except Exception as e:
+            logger.error(f"Error removing widget {widget_id}: {str(e)}", exc_info=True)
             
     def _start_progress_thread(self):
         """Start thread to handle progress updates"""
@@ -278,29 +320,6 @@ class MainWindow:
                 next_interval = 10 if not updates else 50
                 self.root.after(next_interval, self._update_progress)
                 
-    def _remove_download_widget(self, widget_id: str):
-        """Remove download widget"""
-        try:
-            if widget_id in self.downloads:
-                logger.debug(f"Removing widget {widget_id}")
-                widget = self.downloads[widget_id]
-                
-                # Remove from downloads dict before destroying
-                # to prevent any updates during destruction
-                del self.downloads[widget_id]
-                
-                # Destroy widget safely
-                try:
-                    widget.destroy()
-                except Exception as e:
-                    logger.error(f"Error destroying widget: {str(e)}", exc_info=True)
-                
-                # Update scrollregion
-                self.downloads_frame.update_idletasks()
-                
-        except Exception as e:
-            logger.error(f"Error removing widget {widget_id}: {str(e)}", exc_info=True)
-            
     def _create_download_widget(self, title: str) -> str:
         """Create a new download widget"""
         logger.info(f"Creating download widget for: {title}")
@@ -779,6 +798,47 @@ class MainWindow:
             )
         except Exception as e:
             logger.error(f"Error updating button text: {str(e)}", exc_info=True)
+            
+    def _cancel_queued_downloads(self):
+        """Cancel all queued downloads"""
+        # Get list of queued downloads
+        queued_widgets = []
+        for widget_id, widget in self.downloads.items():
+            if not widget.process_id:  # No process ID means it's queued
+                queued_widgets.append(widget_id)
+                
+        # Cancel each queued download
+        for widget_id in queued_widgets:
+            widget = self.downloads[widget_id]
+            widget.is_cancelled = True
+            widget.set_status("Download cancelled")
+            widget.cancel_btn.configure(text="Clear")
+            
+        # Clear the pending URLs list
+        self.pending_downloads.clear()
+        
+    def _cancel_all_downloads(self):
+        """Cancel all downloads (both queued and active)"""
+        # Show confirmation dialog
+        if not messagebox.askyesno(
+            "Cancel All Downloads",
+            "Are you sure you want to cancel all downloads?\nThis will stop both queued and active downloads.",
+            icon="warning"
+        ):
+            return
+            
+        # Cancel queued downloads first
+        self._cancel_queued_downloads()
+        
+        # Cancel active downloads
+        active_widgets = []
+        for widget_id, widget in self.downloads.items():
+            if widget.process_id and not widget.is_cancelled and not widget.is_completed:
+                active_widgets.append(widget_id)
+                
+        # Cancel each active download
+        for widget_id in active_widgets:
+            self._cancel_download(widget_id)
             
     def run(self):
         """Start the application"""

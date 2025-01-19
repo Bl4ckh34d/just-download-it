@@ -100,28 +100,23 @@ class SettingsPanel(ctk.CTkFrame):
         format_frame = ctk.CTkFrame(self)
         format_frame.pack(fill="x", padx=10, pady=5)
         
-        # Video quality
-        self.quality_frame = ctk.CTkFrame(format_frame)
-        self.quality_frame.pack(fill="x", pady=2)
+        # Create inner frame to maintain order of elements
+        inner_frame = ctk.CTkFrame(format_frame, fg_color="transparent")
+        inner_frame.pack(fill="x", padx=0, pady=0)
         
-        ctk.CTkLabel(self.quality_frame, text="Video Quality:").pack(
-            side="left", padx=5
+        # Audio only toggle
+        self.audio_only = ctk.BooleanVar(value=False)
+        audio_only_check = ctk.CTkCheckBox(
+            inner_frame,
+            text="Audio Only",
+            variable=self.audio_only,
+            command=self._on_audio_only_toggle
         )
-        
-        # Get video quality options from YouTubeDownloader
-        video_qualities = list(YouTubeDownloader.VIDEO_FORMATS.keys())
-        self.video_quality = ctk.StringVar(value="1080p")
-        self.quality_menu = ctk.CTkOptionMenu(
-            self.quality_frame,
-            values=video_qualities,
-            variable=self.video_quality,
-            command=self._on_format_change
-        )
-        self.quality_menu.pack(side="left", padx=5)
-        logger.debug(f"Initial video quality: {self.video_quality.get()}")
+        audio_only_check.pack(anchor="w", padx=5, pady=2)
+        logger.debug(f"Initial audio only: {self.audio_only.get()}")
         
         # Audio quality
-        audio_frame = ctk.CTkFrame(format_frame)
+        audio_frame = ctk.CTkFrame(inner_frame)
         audio_frame.pack(fill="x", pady=2)
         
         ctk.CTkLabel(audio_frame, text="Audio Quality:").pack(
@@ -140,16 +135,25 @@ class SettingsPanel(ctk.CTkFrame):
         audio_menu.pack(side="left", padx=5)
         logger.debug(f"Initial audio quality: {self.audio_quality.get()}")
         
-        # Audio only toggle
-        self.audio_only = ctk.BooleanVar(value=False)
-        audio_only_check = ctk.CTkCheckBox(
-            format_frame,
-            text="Audio Only",
-            variable=self.audio_only,
-            command=self._on_audio_only_toggle
+        # Video quality
+        self.quality_frame = ctk.CTkFrame(inner_frame)
+        self.quality_frame.pack(fill="x", pady=2)
+        
+        ctk.CTkLabel(self.quality_frame, text="Video Quality:").pack(
+            side="left", padx=5
         )
-        audio_only_check.pack(anchor="w", padx=5, pady=2)
-        logger.debug(f"Initial audio only: {self.audio_only.get()}")
+        
+        # Get video quality options from YouTubeDownloader
+        video_qualities = list(YouTubeDownloader.VIDEO_FORMATS.keys())
+        self.video_quality = ctk.StringVar(value="1080p")
+        self.quality_menu = ctk.CTkOptionMenu(
+            self.quality_frame,
+            values=video_qualities,
+            variable=self.video_quality,
+            command=self._on_format_change
+        )
+        self.quality_menu.pack(side="left", padx=5)
+        logger.debug(f"Initial video quality: {self.video_quality.get()}")
         
         logger.info("Settings panel initialization complete")
         
@@ -161,7 +165,8 @@ class SettingsPanel(ctk.CTkFrame):
         if is_audio_only:
             self.quality_frame.pack_forget()
         else:
-            self.quality_frame.pack(fill="x", pady=2, before=self.quality_frame.master.winfo_children()[1])
+            # Simply pack at the end of inner_frame, which maintains order
+            self.quality_frame.pack(fill="x", pady=2)
             
         if self.on_format_change:
             self.on_format_change()

@@ -139,6 +139,10 @@ class DownloadWidget(ctk.CTkFrame):
         if status:
             self.muxing_label.configure(text=status)
         
+    def update_title(self, title: str):
+        """Update the widget's title"""
+        self.title_label.configure(text=title)
+        
     def set_status(self, status: str):
         """Update status text"""
         self.status_label.configure(text=status)

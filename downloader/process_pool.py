@@ -99,10 +99,12 @@ class ProcessPool:
     def cleanup_completed(self):
         """Remove completed processes from the pool"""
         for process_id in list(self.processes.keys()):
-            process = self.processes[process_id]
-            if not process.is_alive():
-                # Process is done, clean it up
-                process.join()  # Ensure process is fully cleaned up
-                del self.processes[process_id]
-                logger.debug(f"Cleaned up completed process {process_id}")
+            if not self.processes[process_id].is_alive():
+                self.processes.pop(process_id)
+                logger.debug(f"Removed completed process {process_id}")
 
+    def is_process_running(self, process_id: str) -> bool:
+        """Check if a process is still running"""
+        if process_id not in self.processes:
+            return False
+        return self.processes[process_id].is_alive()

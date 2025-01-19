@@ -381,12 +381,17 @@ class YouTubeDownloader:
             logger.info(f"Starting YouTube download process for {url}")
             logger.debug(f"Settings - Quality: {video_quality}, Audio: {audio_quality}, Audio Only: {audio_only}")
             
-            # Get video info first
+            # Get video info first and send title to update widget
             logger.debug("Fetching video info...")
             info = get_video_info(url)
             title = info.get('title', 'Unknown')
-            clean_title = clean_filename(title)  # Clean the title before logging
-            logger.info(f"Video title: {clean_title}")
+            clean_title = clean_filename(title)
+            
+            # Send title to update widget
+            progress_queue.put({
+                'type': 'title',
+                'title': clean_title
+            })
             
             # Create unique temporary filenames
             video_temp = None if audio_only else os.path.join(dest_folder, f"video_{uuid.uuid4()}.mp4")
@@ -453,7 +458,7 @@ class YouTubeDownloader:
                     raise DownloadError("Download process failed")
             
             # Merge files if needed
-            base_output_path = Path(dest_folder) / f"{clean_filename(info['title'])}.mp4"
+            base_output_path = Path(dest_folder) / f"{clean_title}.mp4"
             output_path = ensure_unique_path(base_output_path)
             if not audio_only:
                 logger.info(f"Merging files to: {output_path}")

@@ -20,11 +20,12 @@ class DownloadWidget(ctk.CTkFrame):
         super().__init__(master, **kwargs)
         
         self.url = url
-        self.on_cancel = on_cancel
-        self.on_clear = on_clear
+        self.id = str(uuid.uuid4())  # Generate unique ID for this widget
+        self.process_id = None  # Store process ID for cancellation
         self.is_cancelled = False
         self.is_completed = False  # Initialize is_completed attribute
-        self.id = str(uuid.uuid4())  # Generate unique ID for this widget
+        self.on_cancel = on_cancel
+        self.on_clear = on_clear
         
         # Create main content frame
         content = ctk.CTkFrame(self)

@@ -1,8 +1,9 @@
 import multiprocessing as mp
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Dict
 import uuid
 import traceback
 import queue
+import time
 
 from utils.logger import Logger
 
@@ -14,7 +15,8 @@ class ProcessPool:
     def __init__(self, max_processes: int = 4):
         """Initialize process pool"""
         self.max_processes = max_processes
-        self.processes = {}
+        self.processes: Dict[str, mp.Process] = {}
+        self.cancel_events: Dict[str, mp.Event] = {}
         self.results = {}
         self.errors = {}
         logger.debug(f"Process pool initialized with max_processes={max_processes}")
@@ -28,6 +30,13 @@ class ProcessPool:
                 raise RuntimeError(f"Maximum number of processes ({self.max_processes}) reached")
             
             process_id = str(uuid.uuid4())
+            
+            # Create cancel event
+            cancel_event = mp.Event()
+            self.cancel_events[process_id] = cancel_event
+            
+            # Add cancel event to args
+            args = (*args, cancel_event)
             
             # Create and start process
             process = mp.Process(target=target, args=args)
@@ -81,10 +90,23 @@ class ProcessPool:
     def terminate_process(self, process_id: str):
         """Terminate a running process"""
         if process_id in self.processes:
+            # Set cancel event
+            if process_id in self.cancel_events:
+                self.cancel_events[process_id].set()
+                
+            # Wait a bit for graceful shutdown
+            time.sleep(0.5)
+            
+            # Force terminate if still running
             process = self.processes[process_id]
             if process.is_alive():
                 process.terminate()
                 process.join()
+                
+            # Clean up
+            if process_id in self.cancel_events:
+                del self.cancel_events[process_id]
+                
             logger.debug(f"Terminated process {process_id}")
             
     def cleanup(self):
@@ -92,6 +114,7 @@ class ProcessPool:
         for process_id in list(self.processes.keys()):
             self.terminate_process(process_id)
         self.processes.clear()
+        self.cancel_events.clear()
         self.results.clear()
         self.errors.clear()
         logger.debug("Process pool cleaned up")

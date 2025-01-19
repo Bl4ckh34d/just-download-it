@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import yt_dlp
 import json
-from multiprocessing import Queue, Process
+from multiprocessing import Queue, Process, Event
 import multiprocessing as mp
 import uuid
 from utils.exceptions import YouTubeError, FFmpegError, DownloadError
@@ -55,7 +55,8 @@ def download_video(
     audio_quality: str,
     audio_only: bool = False,
     video_queue: Any = None,
-    audio_queue: Any = None
+    audio_queue: Any = None,
+    cancel_event: Event = None
 ) -> Tuple[Optional[str], str]:
     """Download video from YouTube"""
     try:
@@ -101,6 +102,14 @@ def download_video(
                 'no_warnings': True
             }
         
+        # Create a custom progress hook that checks for cancellation
+        def progress_hook(d):
+            if cancel_event.is_set():
+                raise Exception("Download cancelled")
+            handle_progress(d, video_queue if d['info_dict'].get('vcodec') != 'none' else audio_queue)
+            
+        ydl_opts['progress_hooks'] = [progress_hook]
+        
         # Download the video
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
@@ -108,7 +117,10 @@ def download_video(
         return video_temp, audio_temp
         
     except Exception as e:
-        raise DownloadError(f"Download failed: {str(e)}")
+        if str(e) == "Download cancelled":
+            raise DownloadError("Download cancelled")
+        else:
+            raise DownloadError(f"Download failed: {str(e)}")
 
 def handle_progress(d: dict, queue: Optional[Queue]):
     """Handle download progress updates"""
@@ -137,7 +149,8 @@ def mux_files(
     video_path: Optional[str],
     audio_path: str,
     output_path: str,
-    progress_queue: Optional[Any] = None
+    progress_queue: Optional[Any] = None,
+    cancel_event: Event = None
 ):
     """Mux video and audio files using ffmpeg"""
     try:
@@ -219,6 +232,11 @@ def mux_files(
                         logger.debug(f"Muxing progress: {progress:.1f}%")
                 except Exception as e:
                     logger.warning(f"Failed to parse time position: {e}")
+                    
+            # Check for cancellation
+            if cancel_event.is_set():
+                process.terminate()
+                raise Exception("Muxing cancelled")
                     
         # Wait for process to finish
         process.wait()
@@ -344,28 +362,39 @@ class YouTubeDownloader:
                 logger.error(f"Error in progress hook: {str(e)}", exc_info=True)
                 
     @staticmethod
-    def download_stream(url: str, options: dict, stream_type: str, progress_queue: Any):
+    def download_stream(url: str, options: dict, stream_type: str, progress_queue: Any, cancel_event: Event):
         """Download a single stream (video or audio)"""
         try:
             logger.info(f"Starting {stream_type} download for {url}")
             logger.debug(f"{stream_type.title()} download options: {options}")
             
-            options['progress_hooks'] = [
-                lambda d: YouTubeDownloader.stream_progress_hook(d, stream_type, progress_queue)
-            ]
+            # Create a custom progress hook that checks for cancellation
+            def progress_hook(d):
+                if cancel_event.is_set():
+                    raise Exception("Download cancelled")
+                YouTubeDownloader.stream_progress_hook(d, stream_type, progress_queue)
+                
+            options['progress_hooks'] = [progress_hook]
+            
             with yt_dlp.YoutubeDL(options) as ydl:
                 ydl.download([url])
                 
             logger.info(f"Finished {stream_type} download")
             
         except Exception as e:
-            error_msg = f"Failed to download {stream_type}: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            progress_queue.put({
-                'type': 'error',
-                'error': error_msg
-            })
-            raise DownloadError(error_msg)
+            if str(e) == "Download cancelled":
+                progress_queue.put({
+                    'type': 'cancelled',
+                    'message': 'Download cancelled'
+                })
+            else:
+                error_msg = f"Failed to download {stream_type}: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                progress_queue.put({
+                    'type': 'error',
+                    'error': error_msg
+                })
+                raise DownloadError(error_msg)
             
     @staticmethod
     def download_process(
@@ -374,7 +403,8 @@ class YouTubeDownloader:
         video_quality: str,
         audio_quality: str,
         audio_only: bool,
-        progress_queue: Any
+        progress_queue: Any,
+        cancel_event: Event
     ):
         """Standalone process for downloading YouTube videos"""
         try:
@@ -437,7 +467,7 @@ class YouTubeDownloader:
             # Start audio download
             audio_process = Process(
                 target=YouTubeDownloader.download_stream,
-                args=(url, audio_opts, 'audio', progress_queue)
+                args=(url, audio_opts, 'audio', progress_queue, cancel_event)
             )
             audio_process.start()
             processes.append(audio_process)
@@ -446,7 +476,7 @@ class YouTubeDownloader:
             if video_opts:
                 video_process = Process(
                     target=YouTubeDownloader.download_stream,
-                    args=(url, video_opts, 'video', progress_queue)
+                    args=(url, video_opts, 'video', progress_queue, cancel_event)
                 )
                 video_process.start()
                 processes.append(video_process)
@@ -462,7 +492,7 @@ class YouTubeDownloader:
             output_path = ensure_unique_path(base_output_path)
             if not audio_only:
                 logger.info(f"Merging files to: {output_path}")
-                YouTubeDownloader.mux_files(video_temp, audio_temp, str(output_path), progress_queue)
+                YouTubeDownloader.mux_files(video_temp, audio_temp, str(output_path), progress_queue, cancel_event)
             else:
                 # For audio only, just rename the temp file
                 os.rename(audio_temp, str(output_path))
@@ -471,16 +501,22 @@ class YouTubeDownloader:
                 })
             
         except Exception as e:
-            error_msg = f"Download process failed: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            progress_queue.put({
-                'type': 'error',
-                'error': error_msg
-            })
-            raise YouTubeError(error_msg)
+            if str(e) == "Download cancelled":
+                progress_queue.put({
+                    'type': 'cancelled',
+                    'message': 'Download cancelled'
+                })
+            else:
+                error_msg = f"Download process failed: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                progress_queue.put({
+                    'type': 'error',
+                    'error': error_msg
+                })
+                raise YouTubeError(error_msg)
             
     @staticmethod
-    def monitor_progress(progress_queue: Any, video_queue: Any = None, audio_queue: Any = None) -> None:
+    def monitor_progress(progress_queue: Any, video_queue: Any = None, audio_queue: Any = None, cancel_event: Event = None) -> None:
         """Monitor download progress and forward to main queue"""
         try:
             # Check video progress
@@ -497,6 +533,13 @@ class YouTubeDownloader:
                 progress_queue.put({
                     'type': 'audio_progress',
                     'data': progress
+                })
+                
+            # Check for cancellation
+            if cancel_event.is_set():
+                progress_queue.put({
+                    'type': 'cancelled',
+                    'message': 'Download cancelled'
                 })
                 
         except Exception as e:

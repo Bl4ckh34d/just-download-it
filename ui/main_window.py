@@ -325,8 +325,10 @@ class MainWindow:
             logger.info(f"Cancelling download for widget {widget_id}")
             if widget_id in self.downloads:
                 widget = self.downloads[widget_id]
-                self.process_pool.terminate_process(widget_id)
-                widget.set_status("Download cancelled")
+                if hasattr(widget, 'process_id'):  # Check if process ID exists
+                    self.process_pool.terminate_process(widget.process_id)
+                    widget.set_status("Download cancelled")
+                    self._clear_download(widget.process_id)
         except Exception as e:
             logger.error(f"Error cancelling download: {str(e)}", exc_info=True)
             if widget_id in self.downloads:
@@ -364,6 +366,7 @@ class MainWindow:
                 
                 # Store process ID in widget
                 self.active_downloads.add(process_id)
+                widget.process_id = process_id  # Store process ID in widget for cancellation
                 
                 # Start monitoring progress
                 threading.Thread(
@@ -422,6 +425,7 @@ class MainWindow:
                 
                 # Store process ID in widget
                 self.active_downloads.add(process_id)
+                widget.process_id = process_id  # Store process ID in widget for cancellation
                 
                 # Start monitoring progress
                 threading.Thread(
@@ -491,6 +495,10 @@ class MainWindow:
                         widget.set_status(f"Error: {progress['error']}")
                         self._clear_download(process_id)
                         break
+                    elif progress['type'] == 'cancelled':
+                        widget.set_status("Download cancelled")
+                        self._clear_download(process_id)
+                        break
                     elif progress['type'] == 'complete':
                         widget.set_status("Download complete")
                         widget.is_completed = True
@@ -551,6 +559,10 @@ class MainWindow:
                         break
                     elif progress['type'] == 'error':
                         widget.set_status(f"Error: {progress.get('error', 'Unknown error')}")
+                        self._clear_download(process_id)
+                        break
+                    elif progress['type'] == 'cancelled':
+                        widget.set_status("Download cancelled")
                         self._clear_download(process_id)
                         break
                         

@@ -22,7 +22,7 @@ class FileDownloader:
     MIN_CHUNK_SIZE = 1024 * 1024  # 1MB minimum chunk size for parallel downloads
     
     @staticmethod
-    def download(url: str, dest_folder: str, progress_queue: Any, thread_count: int = 4) -> None:
+    def download(url: str, dest_folder: str, progress_queue: Any, thread_count: int = 4, cancel_event: mp.Event = None) -> None:
         """Download a file from a URL to the destination folder using multiple threads"""
         try:
             logger.info(f"Starting download from {url} using {thread_count} threads")
@@ -54,7 +54,7 @@ class FileDownloader:
             if total_size == 0:
                 # If size unknown or too small, fall back to single thread download
                 logger.warning("File size unknown or too small, falling back to single thread download")
-                FileDownloader._single_thread_download(session, url, dest_path, total_size, progress_queue)
+                FileDownloader._single_thread_download(session, url, dest_path, total_size, progress_queue, cancel_event)
                 return
                 
             # Calculate chunk size based on file size and thread count
@@ -102,7 +102,11 @@ class FileDownloader:
                                     }
                                 }
                                 progress_queue.put(progress)
-            
+                                if cancel_event and cancel_event.is_set():
+                                    f.close()
+                                    temp_file.unlink()
+                                    return
+                            
             # Download chunks in parallel
             with ThreadPoolExecutor(max_workers=thread_count) as executor:
                 executor.map(download_chunk, enumerate(temp_files))
@@ -110,10 +114,11 @@ class FileDownloader:
             # Combine all chunks
             with open(dest_path, 'wb') as dest:
                 for temp_file in temp_files:
-                    with open(temp_file, 'rb') as src:
-                        dest.write(src.read())
-                    # Clean up temp file
-                    temp_file.unlink()
+                    if temp_file.exists():
+                        with open(temp_file, 'rb') as src:
+                            dest.write(src.read())
+                        # Clean up temp file
+                        temp_file.unlink()
             
             logger.info("Download completed successfully")
             progress_queue.put({'type': 'complete'})
@@ -130,7 +135,7 @@ class FileDownloader:
     
     @staticmethod
     def _single_thread_download(session: requests.Session, url: str, dest_path: Path,
-                              total_size: int, progress_queue: Any):
+                              total_size: int, progress_queue: Any, cancel_event: mp.Event = None):
         """Fallback method for single-threaded download"""
         response = session.get(url, stream=True)
         response.raise_for_status()
@@ -140,6 +145,15 @@ class FileDownloader:
             start_time = time.time()
             
             for chunk in response.iter_content(chunk_size=FileDownloader.CHUNK_SIZE):
+                if cancel_event and cancel_event.is_set():
+                    f.close()
+                    os.remove(dest_path)  # Clean up partial file
+                    progress_queue.put({
+                        'type': 'cancelled',
+                        'message': 'Download cancelled'
+                    })
+                    return
+                    
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)

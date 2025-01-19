@@ -197,3 +197,16 @@ class DownloadWidget(ctk.CTkFrame):
         """Override destroy to mark widget as destroyed"""
         self.is_destroyed = True
         super().destroy()
+
+    def _on_cancel(self):
+        """Handle cancel button click"""
+        if self.is_cancelled or self.is_completed:
+            # If already cancelled or completed, clear the widget
+            if self.on_cancel:
+                self.on_cancel(self.id)
+        else:
+            # Cancel the download
+            self.is_cancelled = True
+            self.cancel_btn.configure(text="Clear")
+            if self.on_cancel:
+                self.on_cancel(self.id)

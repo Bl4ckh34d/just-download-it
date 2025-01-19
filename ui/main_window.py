@@ -822,24 +822,25 @@ class MainWindow:
         # Show confirmation dialog
         if not messagebox.askyesno(
             "Cancel All Downloads",
-            "Are you sure you want to cancel all downloads?\nThis will stop both queued and active downloads.",
-            icon="warning"
+            "Are you sure you want to cancel all downloads?\nThis will stop both queued and active downloads."
         ):
             return
-            
+
         # Cancel queued downloads first
-        self._cancel_queued_downloads()
+        self.pending_downloads.clear()
         
-        # Cancel active downloads
-        active_widgets = []
+        # Update all download widgets
         for widget_id, widget in self.downloads.items():
-            if widget.process_id and not widget.is_cancelled and not widget.is_completed:
-                active_widgets.append(widget_id)
+            if not widget.is_completed:  # Don't modify completed downloads
+                widget.is_cancelled = True
+                widget.set_status("Download cancelled")
+                widget.cancel_btn.configure(text="Clear")
                 
-        # Cancel each active download
-        for widget_id in active_widgets:
-            self._cancel_download(widget_id)
-            
+                # Cancel the process if it's active
+                if hasattr(widget, 'process_id') and widget.process_id:
+                    self.process_pool.terminate_process(widget.process_id)
+                    self._clear_download(widget.process_id)
+                    
     def run(self):
         """Start the application"""
         self.root.mainloop()

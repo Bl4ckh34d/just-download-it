@@ -548,10 +548,6 @@ class MainWindow:
                 self.url_text.delete("1.0", "end")
                 for url in non_playlist_urls:
                     self.url_text.insert("end", url + "\n")
-                    
-                messagebox.showinfo("Playlists Expanded", 
-                    "Playlists have been expanded into individual video URLs.\n"
-                    "Click 'Start Download' again to begin downloading all videos.")
                 return
                 
             # Clear URL text box since we're starting downloads

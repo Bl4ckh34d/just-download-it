@@ -20,6 +20,81 @@ from downloader.utils import is_youtube_url, get_filename_from_url, ensure_uniqu
 
 logger = Logger.get_logger(__name__)
 
+class ResizerFrame(ctk.CTkFrame):
+    def __init__(self, master, resized_widget, **kwargs):
+        super().__init__(master, height=5, **kwargs)
+        self.resized_widget = resized_widget
+        self.start_y = None
+        self.initial_height = None
+        self.last_widget_height = None
+        self.initial_window_height = None
+        self.current_height = 125  # Track the actual height we set
+        
+        # Scale factor to reduce movement (1/1.25)
+        self.scaling = 0.8
+        
+        # Configure appearance
+        self.configure(fg_color="gray30", cursor="sb_v_double_arrow")
+        
+        # Ensure resized widget maintains its size
+        self.resized_widget.pack_propagate(False)
+        
+        # Bind mouse events
+        self.bind("<Button-1>", self._on_press)
+        self.bind("<B1-Motion>", self._on_drag)
+        self.bind("<ButtonRelease-1>", self._on_release)
+        
+        # For smoother updates
+        self._update_after_id = None
+        
+    def _on_press(self, event):
+        self.start_y = event.y_root
+        # Use our tracked height instead of winfo_height
+        self.initial_height = self.current_height
+        self.initial_window_height = self.winfo_toplevel().winfo_height()
+
+    def _on_drag(self, event):
+        if self.start_y is None:
+            return
+
+        # Calculate raw delta from mouse movement
+        delta = event.y_root - self.start_y
+        
+        # Scale the movement delta and add to initial height
+        scaled_delta = int(delta * self.scaling)
+        new_height = max(50, self.initial_height + scaled_delta)
+        
+        # Update URL field height and track it
+        self.current_height = new_height
+        self.resized_widget.configure(height=new_height)
+        self.resized_widget.update_idletasks()
+        
+    def _on_release(self, event):
+        if self.start_y is None:
+            return
+            
+        # Cancel any pending updates
+        if self._update_after_id:
+            self.after_cancel(self._update_after_id)
+            
+        # Reset everything
+        self.start_y = None
+        self.initial_height = None
+        self.last_delta = 0
+        
+        # Re-enable and update settings panel
+        main_window = self.winfo_toplevel()
+        if hasattr(main_window, 'settings_panel'):
+            main_window.settings_panel.pack(fill="x", padx=10, pady=5)
+            self._update_layout()
+            
+    def _update_layout(self):
+        """Update layout with less flickering"""
+        self._update_after_id = None
+        main_window = self.winfo_toplevel()
+        if hasattr(main_window, 'settings_panel'):
+            main_window.update_idletasks()
+            
 class MainWindow:
     def __init__(self):
         logger.info("Initializing main window")
@@ -34,6 +109,7 @@ class MainWindow:
         self.root = ctk.CTk()
         self.root.title("JustDownloadIt")
         self.root.geometry("600x800")
+        self.root.update_idletasks()  # Force geometry update
         
         # Initialize process pool with default max processes
         self.process_pool = ProcessPool(max_processes=10)
@@ -53,7 +129,24 @@ class MainWindow:
             anchor="w", pady=(5,0)
         )
         
-        self._create_url_text()
+        # Create a container frame to control height
+        text_container = ctk.CTkFrame(self.url_frame)
+        text_container.pack(fill="x", pady=(5,0))
+        text_container.pack_propagate(False)  # Prevent propagation of size changes
+        
+        # Create the text box with explicit height
+        self.url_text = ctk.CTkTextbox(text_container, height=125)
+        self.url_text.pack(fill="both", expand=True)
+        
+        # Set container height to match textbox
+        text_container.configure(height=125)
+        
+        # Add resizer frame
+        self.resizer = ResizerFrame(self.url_frame, text_container)  # Change to use container instead of textbox
+        self.resizer.pack(fill="x", pady=(2,5))
+        
+        # Bind text change event to update button text
+        self.url_text.bind('<<Modified>>', self._on_url_text_changed)
         
         # 2. Settings panel (middle section)
         logger.debug("Creating settings panel")
@@ -616,14 +709,6 @@ class MainWindow:
             logger.error(f"Error during cleanup: {str(e)}", exc_info=True)
             self.root.destroy()  # Ensure window is destroyed even if cleanup fails
             
-    def _create_url_text(self):
-        """Create and configure URL text input"""
-        self.url_text = ctk.CTkTextbox(self.url_frame, height=100)
-        self.url_text.pack(fill="x", pady=(5,5))
-        
-        # Bind text change event to update button text
-        self.url_text.bind('<<Modified>>', self._on_url_text_changed)
-        
     def _on_url_text_changed(self, event=None):
         """Handle URL text content changes"""
         try:

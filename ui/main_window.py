@@ -46,15 +46,14 @@ class MainWindow:
         
         # 1. URL input (top section)
         logger.debug("Creating URL input section")
-        url_frame = ctk.CTkFrame(main_frame)
-        url_frame.pack(fill="x", padx=10, pady=5)
+        self.url_frame = ctk.CTkFrame(main_frame)
+        self.url_frame.pack(fill="x", padx=10, pady=5)
         
-        ctk.CTkLabel(url_frame, text="URLs (one per line)").pack(
+        ctk.CTkLabel(self.url_frame, text="URLs (one per line)").pack(
             anchor="w", pady=(5,0)
         )
         
-        self.url_text = ctk.CTkTextbox(url_frame, height=100)
-        self.url_text.pack(fill="x", pady=(5,5))
+        self._create_url_text()
         
         # 2. Settings panel (middle section)
         logger.debug("Creating settings panel")
@@ -519,7 +518,43 @@ class MainWindow:
             if not urls:
                 return
                 
-            # Clear URL text box
+            # First check if there are any playlist URLs
+            has_playlists = False
+            for url in urls:
+                if "list=" in url:
+                    has_playlists = True
+                    try:
+                        # Get all video URLs from playlist
+                        playlist_urls = YouTubeDownloader.get_playlist_urls(url)
+                        if playlist_urls:
+                            logger.info(f"Found {len(playlist_urls)} videos in playlist")
+                            # Add each video URL back to the text box
+                            for video_url in playlist_urls:
+                                self.url_text.insert("end", video_url + "\n")
+                        else:
+                            logger.warning("No videos found in playlist")
+                            messagebox.showwarning("Warning", "No videos found in playlist")
+                    except Exception as e:
+                        logger.error(f"Failed to get playlist info: {str(e)}", exc_info=True)
+                        messagebox.showerror("Error", f"Failed to get playlist info: {str(e)}")
+            
+            # If we found and expanded playlists, don't start downloads yet
+            if has_playlists:
+                # Remove all playlist URLs
+                current_urls = self.url_text.get("1.0", "end").split("\n")
+                non_playlist_urls = [url for url in current_urls if url.strip() and "list=" not in url]
+                
+                # Clear and rewrite the text box with non-playlist URLs
+                self.url_text.delete("1.0", "end")
+                for url in non_playlist_urls:
+                    self.url_text.insert("end", url + "\n")
+                    
+                messagebox.showinfo("Playlists Expanded", 
+                    "Playlists have been expanded into individual video URLs.\n"
+                    "Click 'Start Download' again to begin downloading all videos.")
+                return
+                
+            # Clear URL text box since we're starting downloads
             self.url_text.delete("1.0", "end")
             
             # Get current settings
@@ -530,25 +565,8 @@ class MainWindow:
                 'audio_only': self.settings_panel.audio_only.get()
             }
             
-            # Process each URL
+            # Process each URL for download
             for url in urls:
-                # Check if this is a playlist
-                if "list=" in url:
-                    try:
-                        # Get all video URLs from playlist
-                        playlist_urls = YouTubeDownloader.get_playlist_urls(url)
-                        if playlist_urls:
-                            # Add each video URL back to the text box
-                            for video_url in playlist_urls:
-                                self.url_text.insert("end", video_url + "\n")
-                        else:
-                            messagebox.showwarning("Warning", "No videos found in playlist")
-                        continue  # Skip processing this URL as we've expanded it
-                    except Exception as e:
-                        logger.error(f"Failed to get playlist info: {str(e)}", exc_info=True)
-                        messagebox.showerror("Error", f"Failed to get playlist info: {str(e)}")
-                        continue
-                        
                 # Try to start download or queue it
                 if len(self.active_downloads) < self.process_pool.max_processes:
                     # Start download immediately
@@ -601,6 +619,31 @@ class MainWindow:
         except Exception as e:
             logger.error(f"Error during cleanup: {str(e)}", exc_info=True)
             self.root.destroy()  # Ensure window is destroyed even if cleanup fails
+            
+    def _create_url_text(self):
+        """Create and configure URL text input"""
+        self.url_text = ctk.CTkTextbox(self.url_frame, height=100)
+        self.url_text.pack(fill="x", pady=(5,5))
+        
+        # Bind text change event to update button text
+        self.url_text.bind('<<Modified>>', self._on_url_text_changed)
+        
+    def _on_url_text_changed(self, event=None):
+        """Handle URL text content changes"""
+        try:
+            # Reset modified flag (required for <<Modified>> event to work properly)
+            self.url_text.edit_modified(False)
+            
+            # Check content for playlist URLs
+            urls = [url.strip() for url in self.url_text.get("1.0", "end").split("\n") if url.strip()]
+            has_playlists = any("list=" in url for url in urls)
+            
+            # Update button text
+            self.download_btn.configure(
+                text="Extract Playlists" if has_playlists else "Start Download"
+            )
+        except Exception as e:
+            logger.error(f"Error updating button text: {str(e)}", exc_info=True)
             
     def run(self):
         """Start the application"""

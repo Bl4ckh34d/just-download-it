@@ -76,7 +76,7 @@ class SettingsPanel(ctk.CTkFrame):
         thread_frame = ctk.CTkFrame(self)
         thread_frame.pack(fill="x", padx=10, pady=5)
         
-        ctk.CTkLabel(thread_frame, text="Download Threads:").pack(
+        ctk.CTkLabel(thread_frame, text="Download Threads (Regular Downloads):").pack(
             side="left", padx=5
         )
         
@@ -217,11 +217,9 @@ class SettingsPanel(ctk.CTkFrame):
         """Get current settings"""
         settings = {
             'download_folder': Path(self.folder_var.get()),
-            'threads': self.thread_var.get(),
             'video_quality': self.video_quality.get(),
             'audio_quality': self.audio_quality.get(),
-            'audio_only': self.audio_only.get(),
-            'max_downloads': self.get_max_downloads()
+            'audio_only': self.audio_only.get()
         }
         logger.debug(f"Current settings: {settings}")
         return settings

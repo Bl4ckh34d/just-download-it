@@ -37,6 +37,7 @@ class MainWindow:
         
         # Initialize process pool with default max processes
         self.process_pool = ProcessPool(max_processes=10)
+        self.download_threads = 4  # Default thread count for downloads
         
         # Create main frame with 3 sections
         logger.debug("Creating main frame")
@@ -252,7 +253,7 @@ class MainWindow:
                 # Start download process
                 process_id = self.process_pool.start_process(
                     FileDownloader.download,
-                    args=(url, str(settings['download_folder']), progress_queue)
+                    args=(url, str(settings['download_folder']), progress_queue, self.download_threads)
                 )
                 
                 # Store process ID in widget
@@ -554,7 +555,8 @@ class MainWindow:
         
     def _on_threads_change(self, threads: int):
         """Handle threads count change"""
-        self.process_pool.max_processes = threads
+        logger.info(f"Updating download threads to: {threads}")
+        self.download_threads = threads
         
     def _on_format_change(self):
         """Handle format change"""

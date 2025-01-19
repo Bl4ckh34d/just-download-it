@@ -613,6 +613,15 @@ class MainWindow:
         # Get next URL
         url = urls.pop(0)
         
+        # Update text box to remove the processed URL
+        self.url_text.delete("1.0", "end")
+        # First add remaining unprocessed URLs
+        for remaining_url in urls:
+            self.url_text.insert("end", remaining_url + "\n")
+        # Then add previously invalid URLs
+        for invalid_url in remaining_urls:
+            self.url_text.insert("end", invalid_url + "\n")
+        
         # Skip anything that doesn't look like a URL
         if '.' not in url or not all(p.strip() for p in url.split('.')):
             remaining_urls.append(url)
@@ -656,7 +665,7 @@ class MainWindow:
             logger.debug(f"Queued download for later: {url}")
             # Start checking for pending downloads
             self.root.after(1000, self._check_pending_downloads)
-
+            
     def _start_downloads(self):
         """Start downloading all URLs"""
         try:

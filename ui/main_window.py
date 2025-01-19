@@ -150,27 +150,40 @@ class MainWindow:
     def _update_progress(self):
         """Update progress for all downloads"""
         try:
+            updates = []
             # Process all queued progress updates
             while True:
                 try:
+                    # Collect up to 100 updates at a time to prevent overwhelming the GUI
+                    if len(updates) >= 100:
+                        break
                     widget_id, source, progress_data = self.progress_queue.get_nowait()
+                    updates.append((widget_id, source, progress_data))
+                except Empty:
+                    break
+                    
+            # Apply all updates in a batch
+            if updates:
+                for widget_id, source, progress_data in updates:
                     if widget_id in self.downloads:
                         try:
                             widget = self.downloads[widget_id]
                             widget.update_progress(progress_data)
-                            self.root.update_idletasks()  # Force immediate update
                         except Exception as e:
                             logger.error(f"Error updating widget {widget_id}: {str(e)}", exc_info=True)
-                except Empty:
-                    break
-                    
+                
+                # Only update GUI once after all updates are processed
+                self.root.update_idletasks()
+            
         except Exception as e:
             logger.error(f"Error in progress update: {str(e)}", exc_info=True)
             
         finally:
-            # Schedule next update if window still exists
+            # Schedule next update
             if self.root.winfo_exists():
-                self.root.after(50, self._update_progress)
+                # Use longer interval if no updates to process
+                next_interval = 10 if not updates else 50
+                self.root.after(next_interval, self._update_progress)
                 
     def _remove_download_widget(self, widget_id: str):
         """Remove download widget"""
@@ -351,33 +364,39 @@ class MainWindow:
     ):
         """Monitor progress of YouTube download"""
         try:
+            last_update_time = 0
+            MIN_UPDATE_INTERVAL = 0.05  # Minimum 50ms between updates
+            
             while process_id in self.active_downloads:
                 try:
                     # Try to get progress update
-                    progress = progress_queue.get(timeout=0.1)
+                    progress = progress_queue.get(timeout=0.5)  # Longer timeout to reduce CPU usage
                     
-                    if progress['type'] == 'video_progress':
-                        widget.update_video_progress(**progress['data'])
-                    elif progress['type'] == 'audio_progress':
-                        widget.update_audio_progress(**progress['data'])
-                    elif progress['type'] == 'muxing_progress':
-                        widget.show_muxing_progress()
-                        widget.update_muxing_progress(**progress['data'])
+                    current_time = time.time()
+                    if progress['type'] in ['video_progress', 'audio_progress', 'muxing_progress']:
+                        # Only forward progress updates if enough time has passed
+                        if current_time - last_update_time >= MIN_UPDATE_INTERVAL:
+                            if progress['type'] == 'video_progress':
+                                widget.update_video_progress(**progress['data'])
+                            elif progress['type'] == 'audio_progress':
+                                widget.update_audio_progress(**progress['data'])
+                            elif progress['type'] == 'muxing_progress':
+                                widget.show_muxing_progress()
+                                widget.update_muxing_progress(**progress['data'])
+                            last_update_time = current_time
                     elif progress['type'] == 'error':
                         logger.error(f"Download error: {progress['error']}")
                         widget.set_status(f"Error: {progress['error']}")
                         self.active_downloads.remove(process_id)
-                        # Check pending downloads
                         self._check_pending_downloads()
                         return
                     elif progress['type'] == 'complete':
                         logger.info("Download completed successfully")
-                        widget.is_completed = True  # Set completed flag when final file is saved
-                        widget.is_cancelled = True  # Enable clear button
+                        widget.is_completed = True
+                        widget.is_cancelled = True
                         widget.cancel_btn.configure(text="Clear")
                         widget.set_status("Download complete!")
                         self.active_downloads.remove(process_id)
-                        # Check pending downloads
                         self._check_pending_downloads()
                         return
                         
@@ -388,7 +407,6 @@ class MainWindow:
                     logger.error(f"Error monitoring progress: {str(e)}", exc_info=True)
                     widget.set_status(f"Error: {str(e)}")
                     self.active_downloads.remove(process_id)
-                    # Check pending downloads
                     self._check_pending_downloads()
                     return
                     
@@ -397,7 +415,6 @@ class MainWindow:
             widget.set_status(f"Error: {str(e)}")
             if process_id in self.active_downloads:
                 self.active_downloads.remove(process_id)
-                # Check pending downloads
                 self._check_pending_downloads()
                 
     def _monitor_download_progress(
@@ -411,43 +428,47 @@ class MainWindow:
             # Show audio progress bar since we're downloading a single file
             widget.show_audio_progress()
             
+            last_update_time = 0
+            MIN_UPDATE_INTERVAL = 0.05  # Minimum 50ms between updates
+            
             while process_id in self.active_downloads:
                 try:
                     # Try to get progress update
-                    progress = progress_queue.get(timeout=0.1)
+                    progress = progress_queue.get(timeout=0.5)  # Longer timeout to reduce CPU usage
                     
+                    current_time = time.time()
                     if progress['type'] == 'progress':
-                        data = progress['data']
-                        widget.update_audio_progress(
-                            data['progress'],
-                            data['speed'],
-                            data['downloaded'],
-                            data['total']
-                        )
+                        # Only forward progress updates if enough time has passed
+                        if current_time - last_update_time >= MIN_UPDATE_INTERVAL:
+                            data = progress['data']
+                            widget.update_audio_progress(
+                                data['progress'],
+                                data['speed'],
+                                data['downloaded'],
+                                data['total']
+                            )
+                            last_update_time = current_time
                     elif progress['type'] == 'complete':
-                        widget.is_completed = True  # Set completed flag when file is saved
-                        widget.is_cancelled = True  # Enable clear button
+                        widget.is_completed = True
+                        widget.is_cancelled = True
                         widget.cancel_btn.configure(text="Clear")
                         widget.set_status("Download complete!")
                         self.active_downloads.remove(process_id)
-                        # Check pending downloads
                         self._check_pending_downloads()
                         break
                     elif progress['type'] == 'error':
                         widget.set_status(f"Error: {progress.get('error', 'Unknown error')}")
                         self.active_downloads.remove(process_id)
-                        # Check pending downloads
                         self._check_pending_downloads()
                         break
                         
                 except queue.Empty:
-                    # No progress update available
+                    # No progress update available, just continue
                     continue
                 except Exception as e:
                     logger.error(f"Error monitoring progress: {str(e)}", exc_info=True)
                     widget.set_status(f"Error: {str(e)}")
                     self.active_downloads.remove(process_id)
-                    # Check pending downloads
                     self._check_pending_downloads()
                     break
                     
@@ -456,7 +477,6 @@ class MainWindow:
             widget.set_status(f"Error: {str(e)}")
             if process_id in self.active_downloads:
                 self.active_downloads.remove(process_id)
-                # Check pending downloads
                 self._check_pending_downloads()
                 
     def _clear_download(self, process_id: str):

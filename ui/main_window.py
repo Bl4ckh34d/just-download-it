@@ -618,6 +618,37 @@ class MainWindow:
             if not all_urls:
                 return
             
+            # Check if there are any playlist URLs
+            has_playlists = any("list=" in url for url in all_urls)
+            
+            if has_playlists:
+                # Only handle playlists, keep other URLs in the text field
+                remaining_urls = []
+                extracted_videos = []
+                
+                for url in all_urls:
+                    if "list=" in url:
+                        try:
+                            playlist_urls = YouTubeDownloader.get_playlist_urls(url)
+                            if playlist_urls:
+                                logger.info(f"Found {len(playlist_urls)} videos in playlist")
+                                extracted_videos.extend(playlist_urls)
+                            else:
+                                logger.debug(f"No videos found in playlist: {url}")
+                                remaining_urls.append(url)
+                        except Exception as e:
+                            logger.debug(f"Failed to get playlist info: {str(e)}")
+                            remaining_urls.append(url)
+                    else:
+                        remaining_urls.append(url)
+                
+                # Update text box with remaining URLs and extracted videos
+                self.url_text.delete("1.0", "end")
+                for url in remaining_urls + extracted_videos:
+                    self.url_text.insert("end", url + "\n")
+                return
+                
+            # No playlists present, proceed with downloads
             valid_urls = []
             remaining_urls = []
             
@@ -627,32 +658,18 @@ class MainWindow:
                     remaining_urls.append(url)
                     continue
                     
-                # Handle playlists
-                if "list=" in url:
-                    try:
-                        playlist_urls = YouTubeDownloader.get_playlist_urls(url)
-                        if playlist_urls:
-                            logger.info(f"Found {len(playlist_urls)} videos in playlist")
-                            valid_urls.extend(playlist_urls)
-                        else:
-                            logger.debug(f"No videos found in playlist: {url}")
-                            remaining_urls.append(url)
-                    except Exception as e:
-                        logger.debug(f"Failed to get playlist info: {str(e)}")
-                        remaining_urls.append(url)
-                else:
-                    # Try to validate URL by making a HEAD request
-                    try:
-                        session = requests.Session()
-                        session.headers.update({
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                        })
-                        response = session.head(url if url.startswith(('http://', 'https://')) else f'https://{url}', timeout=5)
-                        response.raise_for_status()
-                        valid_urls.append(url)
-                    except Exception as e:
-                        logger.debug(f"Skipping invalid URL {url}")
-                        remaining_urls.append(url)
+                # Try to validate URL by making a HEAD request
+                try:
+                    session = requests.Session()
+                    session.headers.update({
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    })
+                    response = session.head(url if url.startswith(('http://', 'https://')) else f'https://{url}', timeout=5)
+                    response.raise_for_status()
+                    valid_urls.append(url)
+                except Exception as e:
+                    logger.debug(f"Skipping invalid URL {url}")
+                    remaining_urls.append(url)
             
             # Clear text box and add back non-downloadable lines
             self.url_text.delete("1.0", "end")
@@ -737,7 +754,7 @@ class MainWindow:
             
             # Update button text
             self.download_btn.configure(
-                text="Extract Playlists" if has_playlists else "Start Download"
+                text="Extract Playlists" if has_playlists else "Queue Downloads"
             )
         except Exception as e:
             logger.error(f"Error updating button text: {str(e)}", exc_info=True)

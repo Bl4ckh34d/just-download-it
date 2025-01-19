@@ -589,16 +589,18 @@ class MainWindow:
         
     def _on_closing(self):
         """Handle window closing"""
-        if self.active_downloads:
-            if messagebox.askokcancel(
-                "Quit",
-                "There are active downloads. Do you want to quit and cancel all downloads?"
-            ):
-                # Terminate all processes
-                self.process_pool.terminate_all()
-                self.root.destroy()
-        else:
+        try:
+            # Clean up all running processes
+            logger.info("Cleaning up processes before exit")
+            self.process_pool.cleanup()
+            
+            # Destroy the window
+            logger.info("Destroying main window")
             self.root.destroy()
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}", exc_info=True)
+            self.root.destroy()  # Ensure window is destroyed even if cleanup fails
             
     def run(self):
         """Start the application"""

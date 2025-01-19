@@ -13,6 +13,7 @@ class SettingsPanel(ctk.CTkFrame):
         on_folder_change: Optional[Callable[[Path], None]] = None,
         on_threads_change: Optional[Callable[[int], None]] = None,
         on_format_change: Optional[Callable[[], None]] = None,
+        on_max_downloads_change: Optional[Callable[[int], None]] = None,
         **kwargs
     ):
         logger.info("Initializing settings panel")
@@ -21,6 +22,7 @@ class SettingsPanel(ctk.CTkFrame):
         self.on_folder_change = on_folder_change
         self.on_threads_change = on_threads_change
         self.on_format_change = on_format_change
+        self.on_max_downloads_change = on_max_downloads_change
         
         # Download folder selection
         logger.debug("Creating folder selection")
@@ -47,6 +49,27 @@ class SettingsPanel(ctk.CTkFrame):
         )
         browse_btn.pack(side="left", padx=5)
         logger.debug(f"Initial download folder: {self.folder_var.get()}")
+        
+        # Max concurrent downloads selection
+        logger.debug("Creating max concurrent downloads selection")
+        max_downloads_frame = ctk.CTkFrame(self)
+        max_downloads_frame.pack(fill="x", padx=10, pady=5)
+        
+        ctk.CTkLabel(max_downloads_frame, text="Max. Concurrent Downloads:").pack(
+            side="left", padx=5
+        )
+        
+        self.max_downloads_var = ctk.StringVar(value="4")
+        max_downloads_entry = ctk.CTkEntry(
+            max_downloads_frame,
+            textvariable=self.max_downloads_var,
+            width=50,
+            justify="center"
+        )
+        max_downloads_entry.pack(side="left", padx=5)
+        max_downloads_entry.bind('<FocusOut>', self._validate_max_downloads)
+        max_downloads_entry.bind('<Return>', self._validate_max_downloads)
+        logger.debug(f"Initial max concurrent downloads: {self.max_downloads_var.get()}")
         
         # Thread count selection
         logger.debug("Creating thread count selection")
@@ -172,6 +195,24 @@ class SettingsPanel(ctk.CTkFrame):
         if self.on_format_change:
             self.on_format_change()
             
+    def _validate_max_downloads(self, event=None):
+        """Validate and update max downloads value"""
+        try:
+            value = int(self.max_downloads_var.get())
+            if value < 1:
+                value = 1
+            elif value > 100:
+                value = 100
+            self.max_downloads_var.set(str(value))
+            if self.on_max_downloads_change:
+                self.on_max_downloads_change(value)
+        except ValueError:
+            # Reset to default if invalid input
+            self.max_downloads_var.set("4")
+            if self.on_max_downloads_change:
+                self.on_max_downloads_change(4)
+        logger.debug(f"Max concurrent downloads updated to: {self.max_downloads_var.get()}")
+
     def get_settings(self) -> Dict:
         """Get current settings"""
         settings = {
@@ -179,7 +220,15 @@ class SettingsPanel(ctk.CTkFrame):
             'threads': self.thread_var.get(),
             'video_quality': self.video_quality.get(),
             'audio_quality': self.audio_quality.get(),
-            'audio_only': self.audio_only.get()
+            'audio_only': self.audio_only.get(),
+            'max_downloads': self.get_max_downloads()
         }
         logger.debug(f"Current settings: {settings}")
         return settings
+
+    def get_max_downloads(self) -> int:
+        """Get current max downloads setting"""
+        try:
+            return int(self.max_downloads_var.get())
+        except ValueError:
+            return 4

@@ -35,6 +35,9 @@ class MainWindow:
         self.root.title("JustDownloadIt")
         self.root.geometry("600x800")
         
+        # Initialize process pool with default max processes
+        self.process_pool = ProcessPool(max_processes=10)
+        
         # Create main frame with 3 sections
         logger.debug("Creating main frame")
         main_frame = ctk.CTkFrame(self.root)
@@ -54,18 +57,14 @@ class MainWindow:
         
         # 2. Settings panel (middle section)
         logger.debug("Creating settings panel")
-        self.settings = SettingsPanel(
+        self.settings_panel = SettingsPanel(
             main_frame,
             on_folder_change=self._on_folder_change,
             on_threads_change=self._on_threads_change,
-            on_format_change=self._on_format_change
+            on_format_change=self._on_format_change,
+            on_max_downloads_change=self._on_max_downloads_change
         )
-        self.settings.pack(fill="x")
-        
-        # Initialize process pool with settings thread count
-        initial_threads = self.settings.thread_var.get()
-        logger.debug(f"Creating process pool with {initial_threads} threads")
-        self.process_pool = ProcessPool(max_processes=initial_threads)
+        self.settings_panel.pack(fill="x", padx=10, pady=5)
         
         # Track active and pending downloads
         self.active_downloads = set()
@@ -504,10 +503,10 @@ class MainWindow:
             
             # Get current settings
             settings = {
-                'download_folder': self.settings.folder_var.get(),
-                'video_quality': self.settings.video_quality.get(),
-                'audio_quality': self.settings.audio_quality.get(),
-                'audio_only': self.settings.audio_only.get()
+                'download_folder': self.settings_panel.folder_var.get(),
+                'video_quality': self.settings_panel.video_quality.get(),
+                'audio_quality': self.settings_panel.audio_quality.get(),
+                'audio_only': self.settings_panel.audio_only.get()
             }
             
             # Process each URL
@@ -560,6 +559,11 @@ class MainWindow:
     def _on_format_change(self):
         """Handle format change"""
         pass  # Nothing to do, formats are stored in settings
+        
+    def _on_max_downloads_change(self, value: int):
+        """Handle max downloads setting change"""
+        logger.info(f"Updating max concurrent downloads to: {value}")
+        self.process_pool.max_processes = value
         
     def _on_closing(self):
         """Handle window closing"""

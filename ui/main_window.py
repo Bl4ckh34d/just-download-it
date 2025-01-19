@@ -9,6 +9,7 @@ import time
 import tkinter.messagebox as messagebox
 from tkinter import Tk
 from typing import Optional
+import requests
 
 from utils.logger import Logger
 from .settings_panel import SettingsPanel
@@ -370,22 +371,28 @@ class MainWindow:
                     args=(widget, process_id, progress_queue),
                     daemon=True
                 ).start()
+                
             except RuntimeError as e:
                 if "Maximum number of processes" in str(e):
                     self.pending_downloads.append((url, settings.copy()))
                     widget.set_status("Queued - waiting for available slot...")
                     logger.debug(f"Queued download for later: {url}")
                     self.root.after(1000, self._check_pending_downloads)
+                    return  # Return early to avoid outer exception handler
                 else:
                     raise
-            
+                
+        except requests.exceptions.ConnectionError:
+            logger.error(f"Failed to connect to URL: {url}", exc_info=True)
+            messagebox.showerror("Connection Error", f"Could not connect to {url}. Please check if the URL is correct and accessible.")
+            if widget.id in self.downloads:
+                self._remove_download_widget(widget.id)
         except Exception as e:
-            logger.error(f"Download error: {str(e)}", exc_info=True)
-            self._show_error(
-                "Error",
-                f"Failed to start download: {str(e)}"
-            )
-            
+            logger.error(f"Failed to start download: {str(e)}", exc_info=True)
+            messagebox.showerror("Error", f"Failed to start download: {str(e)}")
+            if widget.id in self.downloads:
+                self._remove_download_widget(widget.id)
+                
     def _download_youtube(self, url: str, settings: dict):
         """Download YouTube video"""
         try:
@@ -442,7 +449,7 @@ class MainWindow:
                     return  # Return early to avoid outer exception handler
                 else:
                     raise
-            
+                
         except Exception as e:
             logger.error(f"Failed to start YouTube download: {str(e)}", exc_info=True)
             messagebox.showerror("Error", f"Failed to start download: {str(e)}")
@@ -607,45 +614,55 @@ class MainWindow:
         """Start downloading all URLs"""
         try:
             # Get URLs from text box
-            urls = [url.strip() for url in self.url_text.get("1.0", "end").split("\n") if url.strip()]
-            if not urls:
+            all_urls = [url.strip() for url in self.url_text.get("1.0", "end").split("\n") if url.strip()]
+            if not all_urls:
                 return
-                
-            # First check if there are any playlist URLs
-            has_playlists = False
-            for url in urls:
+            
+            valid_urls = []
+            remaining_urls = []
+            
+            for url in all_urls:
+                # Skip anything that doesn't look like a URL
+                if '.' not in url or not all(p.strip() for p in url.split('.')):
+                    remaining_urls.append(url)
+                    continue
+                    
+                # Handle playlists
                 if "list=" in url:
-                    has_playlists = True
                     try:
-                        # Get all video URLs from playlist
                         playlist_urls = YouTubeDownloader.get_playlist_urls(url)
                         if playlist_urls:
                             logger.info(f"Found {len(playlist_urls)} videos in playlist")
-                            # Add each video URL back to the text box
-                            for video_url in playlist_urls:
-                                self.url_text.insert("end", video_url + "\n")
+                            valid_urls.extend(playlist_urls)
                         else:
-                            logger.warning("No videos found in playlist")
-                            messagebox.showwarning("Warning", "No videos found in playlist")
+                            logger.debug(f"No videos found in playlist: {url}")
+                            remaining_urls.append(url)
                     except Exception as e:
-                        logger.error(f"Failed to get playlist info: {str(e)}", exc_info=True)
-                        messagebox.showerror("Error", f"Failed to get playlist info: {str(e)}")
+                        logger.debug(f"Failed to get playlist info: {str(e)}")
+                        remaining_urls.append(url)
+                else:
+                    # Try to validate URL by making a HEAD request
+                    try:
+                        session = requests.Session()
+                        session.headers.update({
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                        })
+                        response = session.head(url if url.startswith(('http://', 'https://')) else f'https://{url}', timeout=5)
+                        response.raise_for_status()
+                        valid_urls.append(url)
+                    except Exception as e:
+                        logger.debug(f"Skipping invalid URL {url}")
+                        remaining_urls.append(url)
             
-            # If we found and expanded playlists, don't start downloads yet
-            if has_playlists:
-                # Remove all playlist URLs
-                current_urls = self.url_text.get("1.0", "end").split("\n")
-                non_playlist_urls = [url for url in current_urls if url.strip() and "list=" not in url]
-                
-                # Clear and rewrite the text box with non-playlist URLs
-                self.url_text.delete("1.0", "end")
-                for url in non_playlist_urls:
+            # Clear text box and add back non-downloadable lines
+            self.url_text.delete("1.0", "end")
+            if remaining_urls:
+                for url in remaining_urls:
                     self.url_text.insert("end", url + "\n")
+            
+            if not valid_urls:
                 return
                 
-            # Clear URL text box since we're starting downloads
-            self.url_text.delete("1.0", "end")
-            
             # Get current settings
             settings = {
                 'download_folder': self.settings_panel.folder_var.get(),
@@ -654,8 +671,8 @@ class MainWindow:
                 'audio_only': self.settings_panel.audio_only.get()
             }
             
-            # Process each URL for download
-            for url in urls:
+            # Process each valid URL for download
+            for url in valid_urls:
                 # Try to start download or queue it
                 if len(self.active_downloads) < self.process_pool.max_processes:
                     # Start download immediately
@@ -667,14 +684,13 @@ class MainWindow:
                     # Queue download for later
                     self.pending_downloads.append((url, settings.copy()))
                     logger.debug(f"Queued download for later: {url}")
-                    
+                
             # Start checking for pending downloads
             if self.pending_downloads:
                 self.root.after(1000, self._check_pending_downloads)
-                
+            
         except Exception as e:
             logger.error(f"Error starting downloads: {str(e)}", exc_info=True)
-            messagebox.showerror("Error", f"Failed to start downloads: {str(e)}")
             
     def _on_folder_change(self, folder: Path):
         """Handle download folder change"""

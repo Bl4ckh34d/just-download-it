@@ -719,48 +719,76 @@ class MainWindow:
                 for url in remaining_urls:
                     self.url_text.insert("end", url + "\n")
             return
-            
-        # Get next URL
-        url = urls.pop(0)
-        
-        # Update text box to remove the processed URL
+
+        # Process URLs in batches of 5 to avoid overwhelming the system
+        batch_size = 5
+        current_batch = urls[:batch_size]
+        remaining_batch = urls[batch_size:]
+
+        # Update text box to remove the processed URLs
         self.url_text.delete("1.0", "end")
-        # First add remaining unprocessed URLs
-        for remaining_url in urls:
+        # Add remaining unprocessed URLs
+        for remaining_url in remaining_batch:
             self.url_text.insert("end", remaining_url + "\n")
-        # Then add previously invalid URLs
+        # Add previously invalid URLs
         for invalid_url in remaining_urls:
             self.url_text.insert("end", invalid_url + "\n")
-        
-        # Skip anything that doesn't look like a URL
-        if '.' not in url or not all(p.strip() for p in url.split('.')):
-            remaining_urls.append(url)
-            # Process next URL after a short delay
-            self.root.after(1, lambda: self._process_next_url(urls, settings, remaining_urls))
-            return
-            
-        # Try to validate URL in a separate thread
-        def validate_url():
+
+        # Create a queue to track validation results
+        validation_queue = queue.Queue()
+        validation_threads = []
+
+        def validate_url(url_to_validate):
+            """Validate a single URL"""
+            if '.' not in url_to_validate or not all(p.strip() for p in url_to_validate.split('.')):
+                validation_queue.put((url_to_validate, False))
+                return
+
             try:
                 session = requests.Session()
                 session.headers.update({
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                 })
-                response = session.head(url if url.startswith(('http://', 'https://')) else f'https://{url}', timeout=5)
+                url_to_check = url_to_validate if url_to_validate.startswith(('http://', 'https://')) else f'https://{url_to_validate}'
+                response = session.head(url_to_check, timeout=5, allow_redirects=True)
                 response.raise_for_status()
-                
-                # URL is valid, start or queue download
-                self.root.after(1, lambda: self._start_single_download(url, settings.copy()))
-                
+                validation_queue.put((url_to_validate, True))
             except Exception as e:
-                logger.debug(f"Skipping invalid URL {url}")
-                remaining_urls.append(url)
-                
-            # Process next URL after validation
-            self.root.after(1, lambda: self._process_next_url(urls, settings, remaining_urls))
+                logger.debug(f"Invalid URL {url_to_validate}: {str(e)}")
+                validation_queue.put((url_to_validate, False))
+
+        # Start validation threads for the batch
+        for url in current_batch:
+            thread = threading.Thread(target=validate_url, args=(url,), daemon=True)
+            validation_threads.append(thread)
+            thread.start()
+
+        def check_validation_results():
+            """Check validation results and start downloads"""
+            completed = 0
+            new_remaining_urls = []
+
+            # Check how many validations are complete
+            while not validation_queue.empty():
+                url, is_valid = validation_queue.get()
+                completed += 1
+                if is_valid:
+                    # URL is valid, start or queue download
+                    self._start_single_download(url, settings.copy())
+                else:
+                    new_remaining_urls.append(url)
+
+            if completed < len(current_batch):
+                # Not all validations are complete, check again after a short delay
+                self.root.after(100, check_validation_results)
+            else:
+                # All validations in this batch are complete, process next batch
+                remaining_urls.extend(new_remaining_urls)
+                self.root.after(1, lambda: self._process_next_url(remaining_batch, settings, remaining_urls))
+
+        # Start checking validation results
+        self.root.after(100, check_validation_results)
             
-        threading.Thread(target=validate_url, daemon=True).start()
-        
     def _start_single_download(self, url: str, settings: dict):
         """Start or queue a single download"""
         # Create widget with format info in title

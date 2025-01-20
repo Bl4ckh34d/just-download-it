@@ -1,11 +1,10 @@
 import multiprocessing as mp
 from typing import Any, Callable, Optional, Dict
 import uuid
-import traceback
-import queue
 import time
 
 from utils.logger import Logger
+from utils.exceptions import ProcessError
 
 logger = Logger.get_logger(__name__)
 
@@ -27,7 +26,7 @@ class ProcessPool:
             # Check if we can start a new process
             active = len([p for p in self.processes.values() if p.is_alive()])
             if active >= self.max_processes:
-                raise RuntimeError(f"Maximum number of processes ({self.max_processes}) reached")
+                raise ProcessError(f"Maximum number of processes ({self.max_processes}) reached")
             
             process_id = str(uuid.uuid4())
             
@@ -50,7 +49,7 @@ class ProcessPool:
             
         except Exception as e:
             logger.error(f"Failed to start process: {str(e)}", exc_info=True)
-            raise
+            raise ProcessError(str(e))
             
     def _run_process(self, process_id: str, target: Callable, args: tuple):
         """Run the target function and store its result"""
@@ -60,6 +59,7 @@ class ProcessPool:
         except Exception as e:
             self.errors[process_id] = str(e)
             logger.error(f"Process {process_id} failed: {str(e)}", exc_info=True)
+            raise ProcessError(str(e))
             
     def get_process_status(self, process_id: str) -> str:
         """Get the status of a process"""

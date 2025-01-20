@@ -12,8 +12,10 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import math
 
-from utils.exceptions import DownloadError
+from utils import utils
+from utils.exceptions import DownloadError, BrowserCookieError
 from utils.logger import Logger
+from utils.utils_downloader import format_size
 
 logger = Logger.get_logger(__name__)
 
@@ -25,8 +27,8 @@ class FileDownloader:
     def download(url: str, dest_folder: str, progress_queue: Any, thread_count: int = 4, cancel_event: mp.Event = None) -> None:
         """Download a file from a URL to the destination folder using multiple threads"""
         try:
-            logger.info(f"Starting download from {url} using {thread_count} threads")
-            logger.debug(f"Destination folder: {dest_folder}")
+            logger.info(f"Starting download from {url}")
+            progress_queue.put({'type': 'status', 'message': 'Initializing download...'})
             
             # Create destination folder if it doesn't exist
             os.makedirs(dest_folder, exist_ok=True)
@@ -36,13 +38,22 @@ class FileDownloader:
             dest_path = Path(dest_folder) / filename
             logger.debug(f"Destination path: {dest_path}")
             
-            # Get browser cookies and convert to requests format
-            cookies = FileDownloader._get_cookies(url)
-            logger.debug(f"Got {len(cookies)} cookies for {url}")
+            # Create session with browser cookies
+            session = requests.Session()
+            try:
+                cookies = FileDownloader._get_cookies(url)
+                if cookies:
+                    session.cookies.update(cookies)
+                    logger.debug("Using browser cookies for download")
+            except BrowserCookieError as e:
+                # Log the error but continue without cookies
+                logger.debug(f"Continuing download without browser cookies: {e}")
+                progress_queue.put({
+                    'type': 'status',
+                    'message': 'Browser cookies not available, continuing without them...'
+                })
             
             # Setup session with headers
-            session = requests.Session()
-            session.cookies.update(cookies)
             session.headers.update({
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             })
@@ -194,6 +205,9 @@ class FileDownloader:
     def _get_cookies(url: str) -> dict:
         """Get cookies from installed browsers"""
         cookies = {}
+        chrome_error = None
+        firefox_error = None
+
         try:
             logger.debug("Attempting to get Chrome cookies")
             try:
@@ -203,7 +217,8 @@ class FileDownloader:
                         cookies[cookie.name] = cookie.value
                 logger.debug(f"Got {len(cookies)} Chrome cookies")
             except Exception as e:
-                logger.warning(f"Failed to get Chrome cookies: {e}")
+                chrome_error = str(e)
+                logger.debug(f"Failed to get Chrome cookies: {e}")
                 
             logger.debug("Attempting to get Firefox cookies")
             try:
@@ -215,12 +230,23 @@ class FileDownloader:
                         firefox_count += 1
                 logger.debug(f"Got {firefox_count} Firefox cookies")
             except Exception as e:
-                logger.warning(f"Failed to get Firefox cookies: {e}")
-                
-        except Exception as e:
-            logger.warning(f"Error getting browser cookies: {e}")
+                firefox_error = str(e)
+                logger.debug(f"Failed to get Firefox cookies: {e}")
+
+            if chrome_error and firefox_error:
+                raise BrowserCookieError(
+                    f"Failed to get cookies from any browser.\n"
+                    f"Chrome error: {chrome_error}\n"
+                    f"Firefox error: {firefox_error}"
+                )
             
-        return cookies
+            return cookies
+        except BrowserCookieError:
+            # Re-raise BrowserCookieError as it's already our custom exception
+            raise
+        except Exception as e:
+            # Wrap any other unexpected errors
+            raise BrowserCookieError(f"Unexpected error getting browser cookies: {str(e)}")
         
     @staticmethod
     def _format_size(size_bytes: int) -> str:

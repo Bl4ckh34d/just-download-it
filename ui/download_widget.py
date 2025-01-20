@@ -3,6 +3,7 @@ import tkinter as tk  # Import tkinter for Canvas
 import uuid
 from typing import Callable, Optional
 from utils.logger import Logger
+from utils.exceptions import JustDownloadItError
 
 logger = Logger.get_logger(__name__)
 
@@ -139,8 +140,9 @@ class DownloadWidget(ctk.CTkFrame):
                 self.video_progress.set(min(1.0, progress / 100))
                 if speed and downloaded and total:
                     self.video_label.configure(text=f"{downloaded}/{total} ({speed})")
-            except Exception:
-                pass  # Ignore errors if widget is being destroyed
+            except Exception as e:
+                logger.error(f"Error updating video progress: {str(e)}", exc_info=True)
+                raise JustDownloadItError(f"Error updating video progress: {str(e)}")
             
     def update_audio_progress(self, progress: float, speed: str = "", downloaded: str = "", total: str = ""):
         """Update audio download progress"""
@@ -150,8 +152,9 @@ class DownloadWidget(ctk.CTkFrame):
                 self.audio_progress.set(min(1.0, progress / 100))
                 if speed and downloaded and total:
                     self.audio_label.configure(text=f"{downloaded}/{total} ({speed})")
-            except Exception:
-                pass  # Ignore errors if widget is being destroyed
+            except Exception as e:
+                logger.error(f"Error updating audio progress: {str(e)}", exc_info=True)
+                raise JustDownloadItError(f"Error updating audio progress: {str(e)}")
             
     def update_muxing_progress(self, progress: float, status: str = ""):
         """Update muxing progress"""
@@ -161,16 +164,18 @@ class DownloadWidget(ctk.CTkFrame):
                 self.muxing_progress.set(min(1.0, progress / 100))
                 if status:
                     self.muxing_label.configure(text=status)
-            except Exception:
-                pass  # Ignore errors if widget is being destroyed
+            except Exception as e:
+                logger.error(f"Error updating muxing progress: {str(e)}", exc_info=True)
+                raise JustDownloadItError(f"Error updating muxing progress: {str(e)}")
             
     def update_title(self, title: str):
         """Update the widget's title"""
         if not self.is_destroyed and self.winfo_exists():
             try:
                 self.title_label.configure(text=title)
-            except Exception:
-                pass  # Ignore errors if widget is being destroyed
+            except Exception as e:
+                logger.error(f"Error updating title: {str(e)}", exc_info=True)
+                raise JustDownloadItError(f"Error updating title: {str(e)}")
             
     def set_status(self, status: str):
         """Update status text"""
@@ -180,8 +185,9 @@ class DownloadWidget(ctk.CTkFrame):
                 if status.startswith("Error:"):
                     self.is_cancelled = True
                     self.cancel_btn.configure(text="Clear")
-            except Exception:
-                pass  # Ignore errors if widget is being destroyed
+            except Exception as e:
+                logger.error(f"Error setting status: {str(e)}", exc_info=True)
+                raise JustDownloadItError(f"Error setting status: {str(e)}")
             
     def hide_progress_frame(self):
         """Hide the entire progress section"""

@@ -21,3 +21,7 @@ class FFmpegError(JustDownloadItError):
 class ConfigError(JustDownloadItError):
     """Error in configuration or settings"""
     pass
+
+class BrowserCookieError(JustDownloadItError):
+    """Error when accessing browser cookies"""
+    pass

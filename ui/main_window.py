@@ -10,14 +10,15 @@ import tkinter.messagebox as messagebox
 from tkinter import Tk
 from typing import Optional
 import requests
-from utils.exceptions import DownloadError, YouTubeError, ProcessError, FFmpegError
+from utils.exceptions import DownloadError, YouTubeError, ProcessError, FFmpegError, JustDownloadItError
 from utils.logger import Logger
 from .settings_panel import SettingsPanel
 from .download_widget import DownloadWidget
 from downloader.process_pool import ProcessPool
 from downloader.file_downloader import FileDownloader
 from downloader.youtube_downloader import YouTubeDownloader
-from downloader.utils import is_youtube_url, get_filename_from_url, ensure_unique_path
+from utils import ensure_unique_path
+from utils.utils_ui import is_youtube_url, get_filename_from_url
 import uuid
 
 logger = Logger.get_logger(__name__)
@@ -99,191 +100,195 @@ class ResizerFrame(ctk.CTkFrame):
             
 class MainWindow:
     def __init__(self):
-        logger.info("Initializing main window")
-        
-        # Set theme
-        logger.debug("Setting customtkinter theme")
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
-        
-        # Create main window
-        logger.debug("Creating main window")
-        self.root = ctk.CTk()
-        self.root.title("JustDownloadIt")
-        self.root.geometry("600x800")
-        self.root.update_idletasks()  # Force geometry update
-        
-        # Create main frame with 3 sections
-        logger.debug("Creating main frame")
-        main_frame = ctk.CTkFrame(self.root)
-        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # 1. URL input (top section)
-        logger.debug("Creating URL input section")
-        self.url_frame = ctk.CTkFrame(main_frame)
-        self.url_frame.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(self.url_frame, text="URLs (one per line)").pack(
-            anchor="w", pady=(5,0)
-        )
-        
-        # Create a container frame to control height
-        text_container = ctk.CTkFrame(self.url_frame)
-        text_container.pack(fill="x", pady=(5,0))
-        text_container.pack_propagate(False)  # Prevent propagation of size changes
-        
-        # Create the text box with explicit height
-        self.url_text = ctk.CTkTextbox(text_container, height=125)
-        self.url_text.pack(fill="both", expand=True)
-        
-        # Set container height to match textbox
-        text_container.configure(height=125)
-        
-        # Add resizer frame
-        self.resizer = ResizerFrame(self.url_frame, text_container)  # Change to use container instead of textbox
-        self.resizer.pack(fill="x", pady=(2,5))
-        
-        # Bind text change event to update button text
-        self.url_text.bind('<<Modified>>', self._on_url_text_changed)
-        
-        # 2. Settings panel (middle section)
-        logger.debug("Creating settings panel")
-        self.settings_panel = SettingsPanel(
-            main_frame,
-            on_folder_change=self._on_folder_change,
-            on_threads_change=self._on_threads_change,
-            on_format_change=self._on_format_change,
-            on_max_downloads_change=self._on_max_downloads_change
-        )
-        self.settings_panel.pack(fill="x", padx=10, pady=5)
-        
-        # Initialize process pool with settings panel value
-        self.process_pool = ProcessPool(max_processes=int(self.settings_panel.max_downloads_var.get()))
-        self.download_threads = self.settings_panel.thread_var.get()
-        
-        # Track active and pending downloads
-        self.active_downloads = set()
-        self.pending_downloads = []  # List of (widget_id, url, settings) tuples
-        
-        # Download button
-        logger.debug("Creating download button")
-        self.download_btn = ctk.CTkButton(
-            main_frame,
-            text="Start Downloads",
-            command=self._start_downloads,
-            fg_color="#2ea043",  # GitHub-style green
-            hover_color="#2c974b",  # Darker green for hover
-            text_color="black",
-            font=("", 13, "bold")
-        )
-        self.download_btn.pack(fill="x", padx=10, pady=10)
-        
-        # 3. Downloads area (bottom section, scrollable)
-        logger.debug("Creating downloads area")
-        downloads_container = ctk.CTkFrame(main_frame)
-        downloads_container.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        # Title bar for downloads
-        downloads_title = ctk.CTkFrame(downloads_container)
-        downloads_title.pack(fill="x", padx=5, pady=(5,0))
-        
-        ctk.CTkLabel(
-            downloads_title,
-            text="  Active Downloads:",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(side="left", pady=5)
-        
-        # Create button frame for right-aligned buttons
-        button_frame = ctk.CTkFrame(downloads_title)
-        button_frame.pack(side="right", padx=5)
-        
-        # Cancel All button (red)
-        self.cancel_all_btn = ctk.CTkButton(
-            button_frame,
-            text="Cancel All",
-            width=80,
-            fg_color="#b22222",  # dark red
-            hover_color="#8b0000",  # darker red
-            command=self._cancel_all_downloads
-        )
-        self.cancel_all_btn.pack(side="right", padx=5)
-        
-        # Cancel Queued button
-        self.cancel_queued_btn = ctk.CTkButton(
-            button_frame,
-            text="Cancel Queued",
-            width=100,
-            command=self._cancel_queued_downloads
-        )
-        self.cancel_queued_btn.pack(side="right", padx=5)
-        
-        # Clear Completed button
-        self.clear_btn = ctk.CTkButton(
-            button_frame,
-            text="Clear Aborted/Completed",
-            width=140,
-            command=self._clear_completed
-        )
-        self.clear_btn.pack(side="right", padx=5)
-        
-        # Scrollable frame for download widgets
-        self.downloads_frame = ctk.CTkScrollableFrame(
-            downloads_container,
-            label_text=""
-        )
-        self.downloads_frame.pack(fill="both", expand=True, padx=5, pady=(5,5))
-        
-        # Store active downloads
-        self.downloads: Dict[str, DownloadWidget] = {}
-        
-        # Progress update queue
-        logger.debug("Creating progress update queue")
-        self.progress_queue = queue.Queue()
-        self._start_progress_thread()
-        
-        # Add status labels at the bottom
-        status_container = ctk.CTkFrame(self.root, fg_color="transparent")
-        status_container.pack(side="bottom", fill="x", pady=(0,5))
-        
-        # Center frame for labels
-        center_frame = ctk.CTkFrame(status_container, fg_color="transparent")
-        center_frame.pack(expand=True)
-        
-        # Queue label
-        self.queue_label = ctk.CTkLabel(
-            center_frame,
-            text="Queue:",
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        self.queue_label.pack(side="left", padx=(0,2))
-        
-        self.queue_count = ctk.CTkLabel(
-            center_frame,
-            text="0",
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        self.queue_count.pack(side="left", padx=(0,20))
+        try:
+            logger.info("Initializing main window")
+            
+            # Set theme
+            logger.debug("Setting customtkinter theme")
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("blue")
+            
+            # Create main window
+            logger.debug("Creating main window")
+            self.root = ctk.CTk()
+            self.root.title("JustDownloadIt")
+            self.root.geometry("600x800")
+            self.root.update_idletasks()  # Force geometry update
+            
+            # Create main frame with 3 sections
+            logger.debug("Creating main frame")
+            main_frame = ctk.CTkFrame(self.root)
+            main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+            
+            # 1. URL input (top section)
+            logger.debug("Creating URL input section")
+            self.url_frame = ctk.CTkFrame(main_frame)
+            self.url_frame.pack(fill="x", padx=10, pady=5)
+            
+            ctk.CTkLabel(self.url_frame, text="URLs (one per line)").pack(
+                anchor="w", pady=(5,0)
+            )
+            
+            # Create a container frame to control height
+            text_container = ctk.CTkFrame(self.url_frame)
+            text_container.pack(fill="x", pady=(5,0))
+            text_container.pack_propagate(False)  # Prevent propagation of size changes
+            
+            # Create the text box with explicit height
+            self.url_text = ctk.CTkTextbox(text_container, height=125)
+            self.url_text.pack(fill="both", expand=True)
+            
+            # Set container height to match textbox
+            text_container.configure(height=125)
+            
+            # Add resizer frame
+            self.resizer = ResizerFrame(self.url_frame, text_container)  # Change to use container instead of textbox
+            self.resizer.pack(fill="x", pady=(2,5))
+            
+            # Bind text change event to update button text
+            self.url_text.bind('<<Modified>>', self._on_url_text_changed)
+            
+            # 2. Settings panel (middle section)
+            logger.debug("Creating settings panel")
+            self.settings_panel = SettingsPanel(
+                main_frame,
+                on_folder_change=self._on_folder_change,
+                on_threads_change=self._on_threads_change,
+                on_format_change=self._on_format_change,
+                on_max_downloads_change=self._on_max_downloads_change
+            )
+            self.settings_panel.pack(fill="x", padx=10, pady=5)
+            
+            # Initialize process pool with settings panel value
+            self.process_pool = ProcessPool(max_processes=int(self.settings_panel.max_downloads_var.get()))
+            self.download_threads = self.settings_panel.thread_var.get()
+            
+            # Track active and pending downloads
+            self.active_downloads = set()
+            self.pending_downloads = []  # List of (widget_id, url, settings) tuples
+            
+            # Download button
+            logger.debug("Creating download button")
+            self.download_btn = ctk.CTkButton(
+                main_frame,
+                text="Start Downloads",
+                command=self._start_downloads,
+                fg_color="#2ea043",  # GitHub-style green
+                hover_color="#2c974b",  # Darker green for hover
+                text_color="black",
+                font=("", 13, "bold")
+            )
+            self.download_btn.pack(fill="x", padx=10, pady=10)
+            
+            # 3. Downloads area (bottom section, scrollable)
+            logger.debug("Creating downloads area")
+            downloads_container = ctk.CTkFrame(main_frame)
+            downloads_container.pack(fill="both", expand=True, padx=10, pady=5)
+            
+            # Title bar for downloads
+            downloads_title = ctk.CTkFrame(downloads_container)
+            downloads_title.pack(fill="x", padx=5, pady=(5,0))
+            
+            ctk.CTkLabel(
+                downloads_title,
+                text="  Active Downloads:",
+                font=ctk.CTkFont(size=14, weight="bold")
+            ).pack(side="left", pady=5)
+            
+            # Create button frame for right-aligned buttons
+            button_frame = ctk.CTkFrame(downloads_title)
+            button_frame.pack(side="right", padx=5)
+            
+            # Cancel All button (red)
+            self.cancel_all_btn = ctk.CTkButton(
+                button_frame,
+                text="Cancel All",
+                width=80,
+                fg_color="#b22222",  # dark red
+                hover_color="#8b0000",  # darker red
+                command=self._cancel_all_downloads
+            )
+            self.cancel_all_btn.pack(side="right", padx=5)
+            
+            # Cancel Queued button
+            self.cancel_queued_btn = ctk.CTkButton(
+                button_frame,
+                text="Cancel Queued",
+                width=100,
+                command=self._cancel_queued_downloads
+            )
+            self.cancel_queued_btn.pack(side="right", padx=5)
+            
+            # Clear Completed button
+            self.clear_btn = ctk.CTkButton(
+                button_frame,
+                text="Clear Aborted/Completed",
+                width=140,
+                command=self._clear_completed
+            )
+            self.clear_btn.pack(side="right", padx=5)
+            
+            # Scrollable frame for download widgets
+            self.downloads_frame = ctk.CTkScrollableFrame(
+                downloads_container,
+                label_text=""
+            )
+            self.downloads_frame.pack(fill="both", expand=True, padx=5, pady=(5,5))
+            
+            # Store active downloads
+            self.downloads: Dict[str, DownloadWidget] = {}
+            
+            # Progress update queue
+            logger.debug("Creating progress update queue")
+            self.progress_queue = queue.Queue()
+            self._start_progress_thread()
+            
+            # Add status labels at the bottom
+            status_container = ctk.CTkFrame(self.root, fg_color="transparent")
+            status_container.pack(side="bottom", fill="x", pady=(0,5))
+            
+            # Center frame for labels
+            center_frame = ctk.CTkFrame(status_container, fg_color="transparent")
+            center_frame.pack(expand=True)
+            
+            # Queue label
+            self.queue_label = ctk.CTkLabel(
+                center_frame,
+                text="Queue:",
+                font=ctk.CTkFont(size=16, weight="bold")
+            )
+            self.queue_label.pack(side="left", padx=(0,2))
+            
+            self.queue_count = ctk.CTkLabel(
+                center_frame,
+                text="0",
+                font=ctk.CTkFont(size=16, weight="bold")
+            )
+            self.queue_count.pack(side="left", padx=(0,20))
 
-        # Active downloads label
-        self.active_label = ctk.CTkLabel(
-            center_frame,
-            text="Active Downloads:",
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        self.active_label.pack(side="left", padx=(0,2))
-        
-        self.active_count = ctk.CTkLabel(
-            center_frame,
-            text="0",
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        self.active_count.pack(side="left")
+            # Active downloads label
+            self.active_label = ctk.CTkLabel(
+                center_frame,
+                text="Active Downloads:",
+                font=ctk.CTkFont(size=16, weight="bold")
+            )
+            self.active_label.pack(side="left", padx=(0,2))
+            
+            self.active_count = ctk.CTkLabel(
+                center_frame,
+                text="0",
+                font=ctk.CTkFont(size=16, weight="bold")
+            )
+            self.active_count.pack(side="left")
 
-        # Window close handler
-        logger.debug("Setting up window close handler")
-        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
-        
-        logger.info("Main window initialization complete")
+            # Window close handler
+            logger.debug("Setting up window close handler")
+            self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
+            
+            logger.info("Main window initialization complete")
+        except Exception as e:
+            logger.error(f"Error initializing main window: {str(e)}", exc_info=True)
+            raise JustDownloadItError(f"Error initializing main window: {str(e)}")
         
     def _show_error(self, title: str, message: str):
         """Show error dialog"""

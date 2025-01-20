@@ -10,9 +10,9 @@ import uuid
 from utils.exceptions import YouTubeError, FFmpegError, DownloadError
 from utils.logger import Logger
 import unicodedata
-from .utils import ensure_unique_path
+from utils import ensure_unique_path
 
-logger = Logger.get_instance()
+logger = Logger.get_logger(__name__)
 
 def clean_filename(filename: str) -> str:
     """Clean filename from invalid characters and normalize Unicode characters"""
@@ -46,6 +46,7 @@ def get_video_info(url: str) -> Dict[str, Any]:
                 'formats': info.get('formats', [])
             }
         except Exception as e:
+            logger.error(f"Failed to get video info: {str(e)}", exc_info=True)
             raise YouTubeError(f"Failed to get video info: {str(e)}")
 
 def find_best_matching_resolution(formats: list, target_height: int) -> int:
@@ -248,6 +249,7 @@ def download_video(
         if str(e) == "Download cancelled":
             raise DownloadError("Download cancelled")
         else:
+            logger.error(f"Download failed: {str(e)}", exc_info=True)
             raise DownloadError(f"Download failed: {str(e)}")
 
 def handle_progress(d: dict, queue: Optional[Queue]):
@@ -271,7 +273,7 @@ def handle_progress(d: dict, queue: Optional[Queue]):
                 queue.put(progress)
                 
     except Exception as e:
-        logger.error(f"Error handling progress: {str(e)}")
+        logger.error(f"Error handling progress: {str(e)}", exc_info=True)
 
 class YouTubeDownloader:
     # Video format codes mapping
@@ -395,6 +397,7 @@ class YouTubeDownloader:
             # Check process return code
             if process.returncode != 0:
                 error_output = process.stderr.read()
+                logger.error(f"FFmpeg failed with error: {error_output}", exc_info=True)
                 raise FFmpegError(f"FFmpeg failed with error: {error_output}")
             else:
                 # Send completion message

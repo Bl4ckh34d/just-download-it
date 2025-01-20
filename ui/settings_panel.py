@@ -33,7 +33,9 @@ class SettingsPanel(ctk.CTkFrame):
             side="left", padx=5
         )
         
-        self.folder_var = ctk.StringVar(value=str(Path.home() / "Downloads"))
+        # Use project's downloads folder as default
+        default_path = Path(__file__).parent.parent / "downloads"
+        self.folder_var = ctk.StringVar(value=str(default_path))
         folder_entry = ctk.CTkEntry(
             folder_frame,
             textvariable=self.folder_var,

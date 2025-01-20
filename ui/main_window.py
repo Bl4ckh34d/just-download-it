@@ -1,5 +1,5 @@
 import customtkinter as ctk
-from typing import Dict
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 import threading
 import queue
@@ -897,6 +897,7 @@ class MainWindow:
         """Handle max downloads setting change"""
         logger.debug(f"Max downloads changed to {value}")
         self.process_pool.max_processes = int(value)
+        self._check_pending_downloads()  # Check if we can start any queued downloads
         
     def _on_closing(self):
         """Handle window closing"""
@@ -1084,3 +1085,9 @@ class MainWindow:
 
         # Update counts after processing pending downloads
         self._update_download_counts()
+
+    def _settings_changed(self, setting_name: str, value: Any):
+        """Handle settings changes"""
+        if setting_name == "max_concurrent_downloads":
+            # Check if we can start any queued downloads with the new limit
+            self._check_pending_downloads()

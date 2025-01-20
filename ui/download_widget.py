@@ -30,7 +30,7 @@ class DownloadWidget(ctk.CTkFrame):
         
         # Create main content frame
         content = ctk.CTkFrame(self)
-        content.pack(fill="x", padx=5, pady=5)
+        content.pack(fill="x", padx=5, pady=2)
         
         # Title
         self.title_label = ctk.CTkLabel(
@@ -39,14 +39,14 @@ class DownloadWidget(ctk.CTkFrame):
             anchor="w",
             font=("", 12, "bold")
         )
-        self.title_label.pack(fill="x", padx=5)
+        self.title_label.pack(fill="x", padx=5, pady=(2,0))
         
         # Progress section
-        progress_frame = ctk.CTkFrame(content)
-        progress_frame.pack(fill="x", pady=(5,0))
+        self.progress_frame = ctk.CTkFrame(content)
+        self.progress_frame.pack(fill="x", pady=(2,0))
         
         # Video progress
-        self.video_frame = ctk.CTkFrame(progress_frame)
+        self.video_frame = ctk.CTkFrame(self.progress_frame)
         self.video_frame.pack(fill="x", pady=2)
         
         ctk.CTkLabel(self.video_frame, text="Video:", width=50).pack(side="left", padx=5)
@@ -59,7 +59,7 @@ class DownloadWidget(ctk.CTkFrame):
         self.video_label.pack(side="left", padx=5)
         
         # Audio progress
-        self.audio_frame = ctk.CTkFrame(progress_frame)
+        self.audio_frame = ctk.CTkFrame(self.progress_frame)
         self.audio_frame.pack(fill="x", pady=2)
         
         ctk.CTkLabel(self.audio_frame, text="Audio:", width=50).pack(side="left", padx=5)
@@ -72,7 +72,7 @@ class DownloadWidget(ctk.CTkFrame):
         self.audio_label.pack(side="left", padx=5)
         
         # Muxing progress
-        self.muxing_frame = ctk.CTkFrame(progress_frame)
+        self.muxing_frame = ctk.CTkFrame(self.progress_frame)
         
         ctk.CTkLabel(self.muxing_frame, text="Muxing:", width=50).pack(side="left", padx=5)
         
@@ -90,7 +90,7 @@ class DownloadWidget(ctk.CTkFrame):
         
         # Status and cancel
         status_frame = ctk.CTkFrame(content)
-        status_frame.pack(fill="x")
+        status_frame.pack(fill="x", pady=(2,2))
         
         self.status_label = ctk.CTkLabel(
             status_frame,
@@ -174,6 +174,14 @@ class DownloadWidget(ctk.CTkFrame):
                     self.cancel_btn.configure(text="Clear")
             except Exception:
                 pass  # Ignore errors if widget is being destroyed
+            
+    def hide_progress_frame(self):
+        """Hide the entire progress section"""
+        if not self.is_destroyed and self.winfo_exists():
+            self.video_frame.pack_forget()
+            self.audio_frame.pack_forget()
+            self.muxing_frame.pack_forget()
+            self.progress_frame.pack_forget()
             
     def _on_button_click(self):
         """Handle button click based on current state"""

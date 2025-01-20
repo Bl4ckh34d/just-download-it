@@ -591,7 +591,8 @@ class YouTubeDownloader:
             # Create output path
             title = info.get('title', url)
             safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            base_output_path = Path(download_folder) / f"{safe_title}.mp4"
+            extension = ".m4a" if audio_only else ".mp4"
+            base_output_path = Path(download_folder) / f"{safe_title}{extension}"
             output_path = ensure_unique_path(base_output_path)
             
             # Mux files if needed

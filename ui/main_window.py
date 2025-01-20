@@ -516,6 +516,9 @@ class MainWindow:
             if has_video:
                 widget.show_video_progress()  # Only show video progress if not audio-only
                 
+            is_muxing = False  # Track if we're in muxing phase
+            widget.set_status("Downloading...")  # Initial status
+                
             while True:
                 try:
                     progress = progress_queue.get(timeout=0.1)
@@ -540,11 +543,14 @@ class MainWindow:
                             data.get('total', '0MB')
                         )
                     elif progress['type'] == 'muxing_progress':
+                        is_muxing = True  # Set muxing flag
+                        data = progress.get('data', {})
                         widget.show_muxing_progress()
                         widget.update_muxing_progress(
-                            progress.get('progress', 0),
-                            progress.get('status', '')
+                            data.get('progress', 0),
+                            data.get('status', 'Muxing...')
                         )
+                        widget.set_status("Muxing video and audio...")  # Update status during muxing
                     elif progress['type'] == 'status':
                         widget.set_status(progress['message'])
                     elif progress['type'] == 'error':
@@ -562,7 +568,10 @@ class MainWindow:
                         self._clear_download(process_id)
                         break
                     elif progress['type'] == 'complete':
-                        widget.set_status("Download complete")
+                        if is_muxing:
+                            widget.set_status("Finished!")  # Update status after muxing
+                        else:
+                            widget.set_status(progress.get('message', 'Finished!'))  # Use message if provided
                         widget.is_completed = True
                         widget.is_cancelled = True
                         widget.cancel_btn.configure(text="Clear")
@@ -572,12 +581,13 @@ class MainWindow:
                 except queue.Empty:
                     # Check if process is still running
                     if not self.process_pool.is_process_running(process_id):
-                        widget.set_status("Download failed")
-                        widget.is_completed = True
-                        widget.is_cancelled = True
-                        widget.cancel_btn.configure(text="Clear")
-                        self._clear_download(process_id)
-                        break
+                        if not is_muxing:  # Only show failure if not in muxing phase
+                            widget.set_status("Download failed")
+                            widget.is_completed = True
+                            widget.is_cancelled = True
+                            widget.cancel_btn.configure(text="Clear")
+                            self._clear_download(process_id)
+                            break
                         
         except Exception as e:
             logger.error(f"Error monitoring progress: {str(e)}", exc_info=True)

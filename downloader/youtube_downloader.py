@@ -372,11 +372,21 @@ class YouTubeDownloader:
                         
                         # Calculate progress percentage
                         progress = (seconds / total_duration) * 100 if total_duration > 0 else 0
+                        
+                        # Format time values in MB style for consistency
+                        current_mb = (seconds / total_duration) * 100 if total_duration > 0 else 0  # Use percentage as MB for visual consistency
+                        total_mb = 100  # Total is always 100 since we're showing percentage
+                        
+                        # Format status message with time and MB values
+                        status = f"{current_mb:.1f}MB/{total_mb:.1f}MB"
+                        
                         progress_queue.put({
-                            'type': 'progress',
+                            'type': 'muxing_progress',
                             'data': {
-                                'status': 'muxing',
-                                'progress': progress
+                                'progress': progress,
+                                'status': status,
+                                'downloaded': f"{current_mb:.1f}MB",
+                                'total': f"{total_mb:.1f}MB"
                             }
                         })
                     except Exception as e:
@@ -386,6 +396,13 @@ class YouTubeDownloader:
             if process.returncode != 0:
                 error_output = process.stderr.read()
                 raise FFmpegError(f"FFmpeg failed with error: {error_output}")
+            else:
+                # Send completion message
+                if progress_queue:
+                    progress_queue.put({
+                        'type': 'complete',
+                        'message': 'Finished!'
+                    })
                 
         except Exception as e:
             logger.error(f"Error during muxing: {str(e)}", exc_info=True)
@@ -511,6 +528,13 @@ class YouTubeDownloader:
             # Get video info
             with yt_dlp.YoutubeDL() as ydl:
                 info = ydl.extract_info(url, download=False)
+                
+            # Send title to progress queue immediately
+            title = info.get('title', url)
+            progress_queue.put({
+                'type': 'title',
+                'title': title
+            })
             
             # Create temp directory for downloads
             temp_dir = Path(download_folder) / ".temp"

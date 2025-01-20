@@ -73,6 +73,7 @@ class DownloadWidget(ctk.CTkFrame):
         
         # Muxing progress
         self.muxing_frame = ctk.CTkFrame(self.progress_frame)
+        self.muxing_frame.pack(fill="x", pady=2)  # Pack initially so it's properly configured
         
         ctk.CTkLabel(self.muxing_frame, text="Muxing:", width=50).pack(side="left", padx=5)
         
@@ -122,9 +123,13 @@ class DownloadWidget(ctk.CTkFrame):
     def show_muxing_progress(self):
         """Show muxing progress bar and hide video/audio progress"""
         if not self.is_destroyed:
+            # Hide video and audio frames
             self.video_frame.pack_forget()
             self.audio_frame.pack_forget()
+            
+            # Show muxing frame within the progress frame
             self.muxing_frame.pack(fill="x", pady=2)
+            self.progress_frame.update()  # Force update to ensure proper layout
             
     def update_video_progress(self, progress: float, speed: str = "", downloaded: str = "", total: str = ""):
         """Update video download progress"""

@@ -130,7 +130,8 @@ class DownloadWidget(ctk.CTkFrame):
         """Update video download progress"""
         if not self.is_destroyed and self.winfo_exists():
             try:
-                self.video_progress.set(progress / 100)
+                # Progress is already a percentage (0-100), convert to 0-1 for progress bar
+                self.video_progress.set(min(1.0, progress / 100))
                 if speed and downloaded and total:
                     self.video_label.configure(text=f"{downloaded}/{total} ({speed})")
             except Exception:
@@ -140,7 +141,8 @@ class DownloadWidget(ctk.CTkFrame):
         """Update audio download progress"""
         if not self.is_destroyed and self.winfo_exists():
             try:
-                self.audio_progress.set(progress / 100)
+                # Progress is already a percentage (0-100), convert to 0-1 for progress bar
+                self.audio_progress.set(min(1.0, progress / 100))
                 if speed and downloaded and total:
                     self.audio_label.configure(text=f"{downloaded}/{total} ({speed})")
             except Exception:
@@ -150,7 +152,8 @@ class DownloadWidget(ctk.CTkFrame):
         """Update muxing progress"""
         if not self.is_destroyed and self.winfo_exists():
             try:
-                self.muxing_progress.set(progress / 100)
+                # Progress is already a percentage (0-100), convert to 0-1 for progress bar
+                self.muxing_progress.set(min(1.0, progress / 100))
                 if status:
                     self.muxing_label.configure(text=status)
             except Exception:

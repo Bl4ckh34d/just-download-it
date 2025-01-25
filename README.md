@@ -2,6 +2,8 @@
 
 A multi-threaded file downloader with YouTube support, built with Python.
 
+![GUI](https://github.com/Bl4ckh34d/just-download-it/blob/main/assets/GUI.png)
+
 ## Features
 - Multi-threaded file downloads
 - YouTube video downloads with separate video/audio processing

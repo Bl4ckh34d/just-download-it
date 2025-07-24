@@ -785,7 +785,14 @@ class MainWindow:
         import mimetypes
         ext = os.path.splitext(url.split('?')[0])[1].lower()
         mime, _ = mimetypes.guess_type(url)
-        if is_youtube_url(url):
+        is_youtube = is_youtube_url(url)
+        audio_enabled = settings.get('audio_enabled', False)
+        video_enabled = settings.get('video_enabled', False)
+        # Only start YouTube download if at least one of audio or video is checked
+        if is_youtube and not (audio_enabled or video_enabled):
+            logger.info(f"Skipping YouTube download for {url} because neither audio nor video is checked.")
+            return
+        if is_youtube:
             if settings['audio_enabled'] and not settings['video_enabled']:
                 file_type = 'audio'
             elif settings['video_enabled'] and not settings['audio_enabled']:
@@ -799,7 +806,7 @@ class MainWindow:
         else:
             file_type = 'file'
         title = get_filename_from_url(url)
-        if is_youtube_url(url):
+        if is_youtube:
             if settings['audio_enabled'] and not settings['video_enabled']:
                 format_info = "Audio"
                 format_info += f" ({settings['audio_quality']})"
@@ -812,7 +819,7 @@ class MainWindow:
             title = f"{title} - {format_info}"
         widget_id = self._create_download_widget(title, url, file_type=file_type)
         if len(self.active_downloads) < self.process_pool.max_processes:
-            if is_youtube_url(url):
+            if is_youtube:
                 self._download_youtube(widget_id, url, settings)
             else:
                 self._download_file(widget_id, url, settings)

@@ -689,7 +689,10 @@ class YouTubeDownloader:
             # Create output path
             title = info.get('title', url)
             safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            
+            # Always define output_path for muxing case
+            output_path = Path(download_folder) / f"{safe_title}.mp4"
+            output_path = ensure_unique_path(output_path)
+                
             # Determine output file type based on what's being downloaded
             if muxing_enabled:
                 # Muxing: download both, mux, keep only muxed file

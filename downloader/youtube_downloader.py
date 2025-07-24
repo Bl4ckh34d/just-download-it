@@ -487,6 +487,8 @@ class YouTubeDownloader:
             logger.info(f"Starting {stream_type} download for {url}")
             logger.debug(f"{stream_type.title()} download options: {options}")
             # Add status message before starting download
+            if stream_type == 'video':
+                progress_queue.put({'type': 'status', 'message': f'Downloading video and audio...'})
             progress_queue.put({'type': 'status', 'message': f'Downloading {stream_type}...'})
             def progress_hook(d):
                 if cancel_event.is_set():
@@ -588,7 +590,7 @@ class YouTubeDownloader:
                 progress_queue.put({'type': 'status', 'message': 'Downloading...'})
                 video_process = Process(
                     target=YouTubeDownloader.download_stream,
-                    args=(url, video_opts, 'video and audio', progress_queue, cancel_event)
+                    args=(url, video_opts, 'video', progress_queue, cancel_event)
                 )
                 video_process.start()
                 processes.append(video_process)

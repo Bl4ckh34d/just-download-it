@@ -142,7 +142,7 @@ class FileDownloader:
             
             logger.info("Download completed successfully")
             progress_queue.put({'type': 'status', 'message': 'Finalizing download...'})
-            progress_queue.put({'type': 'complete'})
+            progress_queue.put({'type': 'complete', 'file_path': str(dest_path)})
             
         except Exception as e:
             error_msg = str(e)
@@ -207,7 +207,7 @@ class FileDownloader:
             
             logger.info("Download completed successfully")
             progress_queue.put({'type': 'status', 'message': 'Finalizing download...'})
-            progress_queue.put({'type': 'complete'})
+            progress_queue.put({'type': 'complete', 'file_path': str(dest_path)})
             
     @staticmethod
     def _get_cookies(url: str) -> dict:

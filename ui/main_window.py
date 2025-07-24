@@ -118,7 +118,7 @@ class MainWindow:
             self.root.minsize(600, 600)
             
             # Set initial geometry to minimum width and reasonable height
-            self.root.geometry("600x800")
+            self.root.geometry("600x700")
             self.root.update_idletasks()  # Force geometry update
             
             # Create main frame with 3 sections
@@ -471,7 +471,8 @@ class MainWindow:
                 process_id = self.process_pool.start_process(
                     YouTubeDownloader.download_process,
                     args=(url, str(settings['download_folder']), settings['video_quality'],
-                          settings['audio_quality'], settings['audio_only'], progress_queue)
+                          settings['audio_quality'], settings['audio_enabled'], settings['video_enabled'], 
+                          settings['muxing_enabled'], progress_queue)
                 )
                 
                 # Store process ID in widget
@@ -479,9 +480,11 @@ class MainWindow:
                 widget.process_id = process_id  # Store process ID in widget for cancellation
                 
                 # Start monitoring progress
+                has_video = settings['video_enabled']
+                has_audio = settings['audio_enabled']
                 threading.Thread(
                     target=self._monitor_youtube_progress,
-                    args=(widget, process_id, progress_queue, not settings['audio_only']),
+                    args=(widget, process_id, progress_queue, has_video, has_audio),
                     daemon=True
                 ).start()
                 
@@ -503,16 +506,18 @@ class MainWindow:
         widget: DownloadWidget,
         process_id: str,
         progress_queue: mp.Queue,
-        has_video: bool
+        has_video: bool,
+        has_audio: bool
     ):
         """Monitor progress of YouTube download"""
         try:
             # Show appropriate progress bars
-            widget.show_audio_progress()  # Always show audio progress
+            if has_audio:
+                widget.show_audio_progress()  # Show audio progress if downloading audio
             if has_video:
-                widget.show_video_progress()  # Only show video progress if not audio-only
+                widget.show_video_progress()  # Show video progress if downloading video
             is_muxing = False  # Track if we're in muxing phase
-            widget.set_status("Downloading...")  # Initial status
+            widget.set_status("Starting download...")  # Initial status - yellow
             while True:
                 try:
                     progress = progress_queue.get(timeout=0.1)
@@ -562,6 +567,15 @@ class MainWindow:
                             widget.set_status("Finished!")  # Update status after muxing
                         else:
                             widget.set_status(progress.get('message', 'Finished!'))  # Use message if provided
+                        
+                        # Set the downloaded file path if provided
+                        if 'file_path' in progress:
+                            # Support multiple files (video+audio, non-muxed)
+                            if isinstance(progress['file_path'], list):
+                                widget.set_downloaded_path(progress['file_path'])
+                            else:
+                                widget.set_downloaded_path(progress['file_path'])
+                        
                         widget.is_completed = True
                         widget.is_cancelled = True
                         self._clear_download(process_id)
@@ -590,6 +604,7 @@ class MainWindow:
         """Monitor progress of file download"""
         try:
             widget.show_file_progress()
+            widget.set_status("Starting download...")  # Initial status - yellow
             last_update_time = 0
             MIN_UPDATE_INTERVAL = 0.05
             while process_id in self.active_downloads:
@@ -626,6 +641,11 @@ class MainWindow:
                         break
                     elif progress['type'] == 'complete':
                         widget.set_status("Download complete")
+                        
+                        # Set the downloaded file path if provided
+                        if 'file_path' in progress:
+                            widget.set_downloaded_path(progress['file_path'])
+                        
                         widget.is_completed = True
                         widget.is_cancelled = True
                         widget.cancel_btn.configure(text="Clear")
@@ -766,7 +786,12 @@ class MainWindow:
         ext = os.path.splitext(url.split('?')[0])[1].lower()
         mime, _ = mimetypes.guess_type(url)
         if is_youtube_url(url):
-            file_type = 'audio' if settings['audio_only'] else 'video'
+            if settings['audio_enabled'] and not settings['video_enabled']:
+                file_type = 'audio'
+            elif settings['video_enabled'] and not settings['audio_enabled']:
+                file_type = 'video'
+            else:
+                file_type = 'video'  # Default to video for video+audio downloads
         elif mime and mime.startswith('video'):
             file_type = 'video'
         elif mime and mime.startswith('audio'):
@@ -775,10 +800,14 @@ class MainWindow:
             file_type = 'file'
         title = get_filename_from_url(url)
         if is_youtube_url(url):
-            format_info = "Audio" if settings['audio_only'] else "Video"
-            if settings['audio_only']:
+            if settings['audio_enabled'] and not settings['video_enabled']:
+                format_info = "Audio"
                 format_info += f" ({settings['audio_quality']})"
+            elif settings['video_enabled'] and not settings['audio_enabled']:
+                format_info = "Video"
+                format_info += f" ({settings['video_quality']})"
             else:
+                format_info = "Video"
                 format_info += f" ({settings['video_quality']}, {settings['audio_quality']})"
             title = f"{title} - {format_info}"
         widget_id = self._create_download_widget(title, url, file_type=file_type)
@@ -838,7 +867,9 @@ class MainWindow:
                 'download_folder': self.settings_panel.folder_var.get(),
                 'video_quality': self.settings_panel.video_quality.get(),
                 'audio_quality': self.settings_panel.audio_quality.get(),
-                'audio_only': self.settings_panel.audio_only.get()
+                'audio_enabled': self.settings_panel.audio_enabled.get(),
+                'video_enabled': self.settings_panel.video_enabled.get(),
+                'muxing_enabled': self.settings_panel.muxing_enabled.get()
             }
             
             # Start processing URLs asynchronously
@@ -887,8 +918,14 @@ class MainWindow:
             # Reset modified flag (required for <<Modified>> event to work properly)
             self.url_text.edit_modified(False)
             
-            # Check content for playlist URLs
+            # Get URLs from text field
             urls = [url.strip() for url in self.url_text.get("1.0", "end").split("\n") if url.strip()]
+            
+            # Update settings panel checkbox visibility based on URL content
+            if hasattr(self, 'settings_panel'):
+                self.settings_panel.update_checkbox_visibility(urls)
+            
+            # Check content for playlist URLs
             has_playlists = any("list=" in url for url in urls)
             
             # Update button text

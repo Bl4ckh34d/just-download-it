@@ -111,8 +111,8 @@ class SettingsPanel(ctk.CTkFrame):
             thread_slider = ctk.CTkSlider(
                 thread_control_frame,
                 from_=1,
-                to=8,
-                number_of_steps=7,
+                to=20,
+                number_of_steps=19,
                 variable=self.thread_var,
                 command=self._on_thread_change
             )
@@ -124,29 +124,67 @@ class SettingsPanel(ctk.CTkFrame):
             
             # YouTube format selection
             logger.debug("Creating YouTube format selection")
-            format_frame = ctk.CTkFrame(self)
-            format_frame.pack(fill="x", padx=10, pady=5)
+            self.format_frame = ctk.CTkFrame(self)
+            # Initially hidden, will be shown when URLs are added
+            # self.format_frame.pack(fill="x", padx=10, pady=5)
             
             # Create inner frame to maintain order of elements
-            inner_frame = ctk.CTkFrame(format_frame, fg_color="transparent")
-            inner_frame.pack(fill="x", padx=0, pady=0)
+            self.inner_frame = ctk.CTkFrame(self.format_frame, fg_color="transparent")
+            self.inner_frame.pack(fill="x", padx=0, pady=0)
             
-            # Audio only toggle
-            self.audio_only = ctk.BooleanVar(value=False)
-            audio_only_check = ctk.CTkCheckBox(
-                inner_frame,
-                text="Audio Only",
-                variable=self.audio_only,
-                command=self._on_audio_only_toggle
+            # Create horizontal frame for checkboxes
+            self.checkbox_frame = ctk.CTkFrame(self.inner_frame, fg_color="transparent")
+            self.checkbox_frame.pack(fill="x", padx=0, pady=0)
+            
+            # Audio toggle
+            self.audio_enabled = ctk.BooleanVar(value=False)
+            self.audio_check = ctk.CTkCheckBox(
+                self.checkbox_frame,
+                text="Audio",
+                variable=self.audio_enabled,
+                command=self._on_audio_toggle
             )
-            audio_only_check.pack(anchor="w", padx=5, pady=2)
-            logger.debug(f"Initial audio only: {self.audio_only.get()}")
+            self.audio_check.pack(side="left", padx=5, pady=2)
+            logger.debug(f"Initial audio enabled: {self.audio_enabled.get()}")
             
-            # Audio quality
-            audio_frame = ctk.CTkFrame(inner_frame)
-            audio_frame.pack(fill="x", pady=2)
+            # Video toggle
+            self.video_enabled = ctk.BooleanVar(value=False)
+            self.video_check = ctk.CTkCheckBox(
+                self.checkbox_frame,
+                text="Video",
+                variable=self.video_enabled,
+                command=self._on_video_toggle
+            )
+            self.video_check.pack(side="left", padx=5, pady=2)
+            logger.debug(f"Initial video enabled: {self.video_enabled.get()}")
             
-            ctk.CTkLabel(audio_frame, text="Audio Quality:").pack(
+            # Initially hide both checkboxes since no URLs are present
+            self.audio_check.pack_forget()
+            self.video_check.pack_forget()
+            
+            # Initially hide the checkbox frame since no checkboxes are visible
+            self.checkbox_frame.pack_forget()
+            
+            # Muxing toggle (only visible when both audio and video are checked)
+            self.muxing_enabled = ctk.BooleanVar(value=False)
+            self.muxing_check = ctk.CTkCheckBox(
+                self.checkbox_frame,
+                text="Muxing",
+                variable=self.muxing_enabled,
+                command=self._on_muxing_toggle
+            )
+            # Initially hidden, will be shown when both audio and video are checked
+            logger.debug(f"Initial muxing enabled: {self.muxing_enabled.get()}")
+            
+            # Create horizontal frame for quality settings
+            self.quality_settings_frame = ctk.CTkFrame(self.inner_frame, fg_color="transparent")
+            # Initially not packed, will be packed when audio or video is enabled
+            
+            # Audio quality frame
+            self.audio_frame = ctk.CTkFrame(self.quality_settings_frame)
+            # Initially hidden, will be shown when audio is checked
+            
+            ctk.CTkLabel(self.audio_frame, text="Audio Quality:").pack(
                 side="left", padx=5
             )
             
@@ -154,7 +192,7 @@ class SettingsPanel(ctk.CTkFrame):
             audio_qualities = list(YouTubeDownloader.AUDIO_FORMATS.keys())
             self.audio_quality = ctk.StringVar(value="High (m4a)")
             audio_menu = ctk.CTkOptionMenu(
-                audio_frame,
+                self.audio_frame,
                 values=audio_qualities,
                 variable=self.audio_quality,
                 command=self._on_format_change
@@ -162,9 +200,9 @@ class SettingsPanel(ctk.CTkFrame):
             audio_menu.pack(side="left", padx=5)
             logger.debug(f"Initial audio quality: {self.audio_quality.get()}")
             
-            # Video quality
-            self.quality_frame = ctk.CTkFrame(inner_frame)
-            self.quality_frame.pack(fill="x", pady=2)
+            # Video quality frame
+            self.quality_frame = ctk.CTkFrame(self.quality_settings_frame)
+            # Initially hidden, will be shown when video is checked
             
             ctk.CTkLabel(self.quality_frame, text="Video Quality:").pack(
                 side="left", padx=5
@@ -187,19 +225,161 @@ class SettingsPanel(ctk.CTkFrame):
             logger.error(f"Error initializing settings panel: {str(e)}", exc_info=True)
             raise JustDownloadItError(f"Error initializing settings panel: {str(e)}")
         
-    def _on_audio_only_toggle(self):
-        """Handle audio only toggle"""
-        is_audio_only = self.audio_only.get()
-        logger.debug(f"Audio only toggled: {is_audio_only}")
+    def _on_audio_toggle(self):
+        """Handle audio toggle"""
+        is_audio_enabled = self.audio_enabled.get()
+        logger.debug(f"Audio toggled: {is_audio_enabled}")
         
-        if is_audio_only:
-            self.quality_frame.pack_forget()
+        if is_audio_enabled:
+            # Pack quality settings frame if not already packed
+            try:
+                self.quality_settings_frame.pack_info()
+            except:
+                self.quality_settings_frame.pack(fill="x", padx=0, pady=0)
+            # Show audio quality frame
+            self.audio_frame.pack(side="left", padx=5, pady=2)
         else:
-            # Simply pack at the end of inner_frame, which maintains order
-            self.quality_frame.pack(fill="x", pady=2)
-            
+            # Hide audio quality frame
+            self.audio_frame.pack_forget()
+            # Uncheck muxing if audio is unchecked
+            self.muxing_enabled.set(False)
+            # Hide quality settings frame if no audio or video is enabled
+            self._update_quality_settings_visibility()
+        
+        # Update muxing checkbox visibility
+        self._update_muxing_visibility()
+        
         if self.on_format_change:
             self.on_format_change()
+            
+    def _on_video_toggle(self):
+        """Handle video toggle"""
+        is_video_enabled = self.video_enabled.get()
+        logger.debug(f"Video toggled: {is_video_enabled}")
+        
+        if is_video_enabled:
+            # Pack quality settings frame if not already packed
+            try:
+                self.quality_settings_frame.pack_info()
+            except:
+                self.quality_settings_frame.pack(fill="x", padx=0, pady=0)
+            # Show video quality frame
+            self.quality_frame.pack(side="left", padx=5, pady=2)
+        else:
+            # Hide video quality frame
+            self.quality_frame.pack_forget()
+            # Uncheck muxing if video is unchecked
+            self.muxing_enabled.set(False)
+            # Hide quality settings frame if no audio or video is enabled
+            self._update_quality_settings_visibility()
+        
+        # Update muxing checkbox visibility
+        self._update_muxing_visibility()
+        
+        if self.on_format_change:
+            self.on_format_change()
+    
+    def _on_muxing_toggle(self):
+        """Handle muxing toggle"""
+        is_muxing_enabled = self.muxing_enabled.get()
+        logger.debug(f"Muxing toggled: {is_muxing_enabled}")
+        
+        if self.on_format_change:
+            self.on_format_change()
+    
+    def _update_muxing_visibility(self):
+        """Update muxing checkbox visibility based on audio and video states"""
+        audio_enabled = self.audio_enabled.get()
+        video_enabled = self.video_enabled.get()
+        
+        if audio_enabled and video_enabled:
+            # Show muxing checkbox when both audio and video are enabled
+            self.muxing_check.pack(side="left", padx=5, pady=2)
+        else:
+            # Hide muxing checkbox and uncheck it
+            self.muxing_check.pack_forget()
+            self.muxing_enabled.set(False)
+            
+    def _update_quality_settings_visibility(self):
+        """Update quality settings frame visibility based on audio and video states"""
+        audio_enabled = self.audio_enabled.get()
+        video_enabled = self.video_enabled.get()
+        
+        if not audio_enabled and not video_enabled:
+            # Hide quality settings frame when neither audio nor video is enabled
+            try:
+                self.quality_settings_frame.pack_forget()
+            except:
+                pass  # Frame might not be packed yet
+                
+    def _detect_url_formats(self, urls: list) -> tuple[bool, bool]:
+        """Detect if URLs contain audio or video formats"""
+        audio_formats = ['.mp3', '.m4a', '.wav', '.flac', '.aac', '.ogg', '.wma']
+        video_formats = ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v']
+        
+        has_audio_urls = False
+        has_video_urls = False
+        
+        for url in urls:
+            url_lower = url.lower()
+            
+            # Check for YouTube URLs (can contain both audio and video)
+            if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
+                has_audio_urls = True
+                has_video_urls = True
+                continue
+                
+            # Check for audio formats
+            if any(format_ext in url_lower for format_ext in audio_formats):
+                has_audio_urls = True
+                
+            # Check for video formats
+            if any(format_ext in url_lower for format_ext in video_formats):
+                has_video_urls = True
+                
+        return has_audio_urls, has_video_urls
+        
+    def update_checkbox_visibility(self, urls: list):
+        """Update checkbox visibility based on URL content"""
+        has_audio_urls, has_video_urls = self._detect_url_formats(urls)
+        
+        # Show/hide audio checkbox
+        if has_audio_urls:
+            self.audio_check.pack(side="left", padx=5, pady=2)
+        else:
+            self.audio_check.pack_forget()
+            # Uncheck audio if hidden
+            self.audio_enabled.set(False)
+            
+        # Show/hide video checkbox
+        if has_video_urls:
+            self.video_check.pack(side="left", padx=5, pady=2)
+        else:
+            self.video_check.pack_forget()
+            # Uncheck video if hidden
+            self.video_enabled.set(False)
+            
+        # Show/hide checkbox frame based on whether any checkboxes are visible
+        if has_audio_urls or has_video_urls:
+            try:
+                self.checkbox_frame.pack_info()
+            except:
+                self.checkbox_frame.pack(fill="x", padx=0, pady=0)
+            # Show format frame when checkboxes are visible
+            try:
+                self.format_frame.pack_info()
+            except:
+                self.format_frame.pack(fill="x", padx=10, pady=5)
+        else:
+            self.checkbox_frame.pack_forget()
+            # Hide format frame when no checkboxes are visible
+            self.format_frame.pack_forget()
+            
+        # Update muxing visibility
+        self._update_muxing_visibility()
+        
+        # Update quality settings visibility
+        self._update_quality_settings_visibility()
             
     def _browse_folder(self):
         """Open folder selection dialog"""
@@ -243,7 +423,9 @@ class SettingsPanel(ctk.CTkFrame):
         logger.debug(
             f"Format changed - Video: {self.video_quality.get()}, "
             f"Audio: {self.audio_quality.get()}, "
-            f"Audio Only: {self.audio_only.get()}"
+            f"Audio Enabled: {self.audio_enabled.get()}, "
+            f"Video Enabled: {self.video_enabled.get()}, "
+            f"Muxing Enabled: {self.muxing_enabled.get()}"
         )
         if self.on_format_change:
             self.on_format_change()
@@ -272,7 +454,9 @@ class SettingsPanel(ctk.CTkFrame):
             'download_folder': Path(self.folder_var.get()),
             'video_quality': self.video_quality.get(),
             'audio_quality': self.audio_quality.get(),
-            'audio_only': self.audio_only.get()
+            'audio_enabled': self.audio_enabled.get(),
+            'video_enabled': self.video_enabled.get(),
+            'muxing_enabled': self.muxing_enabled.get()
         }
         logger.debug(f"Current settings: {settings}")
         return settings

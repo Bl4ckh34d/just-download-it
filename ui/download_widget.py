@@ -138,6 +138,46 @@ class DownloadWidget(ctk.CTkFrame):
         self.open_btn.configure(state="disabled")  # Initially disabled
         logger.debug(f"Download widget created with URL: {self.url} and file_type: {file_type}")
         
+        # Debug: Check what parameters are available on progress bars
+        try:
+            logger.debug(f"Progress bar config keys: {list(self.file_progress.configure().keys())}")
+        except Exception as e:
+            logger.debug(f"Could not get progress bar config: {e}")
+        
+    def _set_progress_color(self, progress_bar, color: str):
+        """Set the color of a progress bar"""
+        if not self.is_destroyed and self.winfo_exists():
+            try:
+                # Try different possible parameter names for CustomTkinter progress bars
+                try:
+                    progress_bar.configure(progress_color=color)
+                    logger.debug(f"Set progress bar color to: {color} using progress_color")
+                except:
+                    try:
+                        progress_bar.configure(fg_color=color)
+                        logger.debug(f"Set progress bar color to: {color} using fg_color")
+                    except:
+                        progress_bar.configure(progress_color=color)
+                        logger.debug(f"Set progress bar color to: {color} using progress_color (fallback)")
+            except Exception as e:
+                logger.error(f"Error setting progress color: {str(e)}", exc_info=True)
+                
+    def _set_all_progress_colors(self, color: str):
+        """Set all visible progress bars to the same color"""
+        if not self.is_destroyed and self.winfo_exists():
+            try:
+                # Check which progress bars are visible and set their colors
+                if self.file_frame.winfo_viewable():
+                    self._set_progress_color(self.file_progress, color)
+                if self.video_frame.winfo_viewable():
+                    self._set_progress_color(self.video_progress, color)
+                if self.audio_frame.winfo_viewable():
+                    self._set_progress_color(self.audio_progress, color)
+                if self.muxing_frame.winfo_viewable():
+                    self._set_progress_color(self.muxing_progress, color)
+            except Exception as e:
+                logger.error(f"Error setting all progress colors: {str(e)}", exc_info=True)
+        
     def show_video_progress(self):
         """Show video progress bar"""
         if not self.is_destroyed:
@@ -223,16 +263,49 @@ class DownloadWidget(ctk.CTkFrame):
         if not self.is_destroyed and self.winfo_exists():
             try:
                 self.status_label.configure(text=status)
-                if status.startswith("Error:"):
+                logger.debug(f"Setting status to: '{status}'")
+                
+                # Set progress bar colors based on status
+                status_lower = status.lower()
+                if status_lower.startswith("error:"):
                     self.is_cancelled = True
                     self.open_btn.configure(text="Open", state="disabled")
-                elif status.lower().startswith("download complete") or status.lower().startswith("finished"):
+                    # Keep default color for errors
+                    logger.debug("Status indicates error - keeping default color")
+                elif "muxing" in status_lower or "preparing" in status_lower or "fetching" in status_lower or status_lower.startswith("starting download"):
+                    # Yellow for muxing, preparing, fetching information, or starting download
+                    logger.debug("Status indicates muxing/preparing/fetching/starting - setting yellow")
+                    self._set_all_progress_colors("#FFD700")  # Gold/yellow
+                elif status_lower.startswith("download complete") or status_lower.startswith("finished") or status_lower.startswith("finished!"):
+                    # Green for completed downloads
+                    logger.debug("Status indicates completion - setting green")
+                    self._set_all_progress_colors("#32CD32")  # Lime green
                     self.open_btn.configure(state="normal")
+                elif status_lower.startswith("download cancelled") or status_lower.startswith("download failed"):
+                    self.open_btn.configure(text="Open", state="disabled")
+                    # Keep default color for cancelled/failed
+                    logger.debug("Status indicates cancelled/failed - keeping default color")
                 else:
+                    # Default color for other statuses (downloading, etc.)
+                    logger.debug("Status indicates downloading - setting blue")
+                    self._set_all_progress_colors("#1f538d")  # Default blue
                     self.open_btn.configure(state="disabled")
             except Exception as e:
                 logger.error(f"Error setting status: {str(e)}", exc_info=True)
                 raise JustDownloadItError(f"Error setting status: {str(e)}")
+    
+    def set_downloaded_path(self, file_path):
+        """Set the path(s) of the downloaded file(s)"""
+        if not self.is_destroyed and self.winfo_exists():
+            try:
+                if isinstance(file_path, list):
+                    self.downloaded_paths = file_path
+                else:
+                    self.downloaded_paths = [file_path]
+                logger.debug(f"Set downloaded path(s) for widget {self.id}: {self.downloaded_paths}")
+            except Exception as e:
+                logger.error(f"Error setting downloaded path: {str(e)}", exc_info=True)
+                raise JustDownloadItError(f"Error setting downloaded path: {str(e)}")
             
     def hide_progress_frame(self):
         """Hide the entire progress section"""
@@ -261,21 +334,23 @@ class DownloadWidget(ctk.CTkFrame):
                 pass  # Ignore errors if widget is being destroyed
                 
     def _on_open_click(self):
-        """Open the downloaded file if available"""
+        """Open the downloaded file(s) if available"""
         import os
         import subprocess
-        if hasattr(self, 'downloaded_path') and self.downloaded_path and os.path.exists(self.downloaded_path):
-            try:
-                if os.name == 'nt':
-                    os.startfile(self.downloaded_path)
-                elif os.name == 'posix':
-                    subprocess.Popen(['xdg-open', self.downloaded_path])
-                else:
-                    subprocess.Popen(['open', self.downloaded_path])
-            except Exception as e:
-                logger.error(f"Failed to open file: {str(e)}", exc_info=True)
+        if hasattr(self, 'downloaded_paths') and self.downloaded_paths:
+            for path in self.downloaded_paths:
+                if path and os.path.exists(path):
+                    try:
+                        if os.name == 'nt':
+                            os.startfile(path)
+                        elif os.name == 'posix':
+                            subprocess.Popen(['xdg-open', path])
+                        else:
+                            subprocess.Popen(['open', path])
+                    except Exception as e:
+                        logger.error(f"Failed to open file: {str(e)}", exc_info=True)
         else:
-            logger.debug("Open button clicked but file does not exist or is not ready.")
+            logger.debug("Open button clicked but file(s) do not exist or are not ready.")
                 
     def destroy(self):
         """Override destroy to mark widget as destroyed"""

@@ -418,6 +418,67 @@ class YouTubeDownloader:
             raise
     
     @staticmethod
+    def remove_audio(
+        video_path: str,
+        output_path: str,
+        progress_queue: Optional[Any] = None,
+        cancel_event: Event = None
+    ):
+        """Remove audio from a video file using ffmpeg"""
+        try:
+            if cancel_event and cancel_event.is_set():
+                logger.info("Audio removal cancelled before starting")
+                return
+            if progress_queue:
+                progress_queue.put({'type': 'status', 'message': 'Removing audio from video...'})
+
+            # Prepare ffmpeg command to remove audio
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-y',  # Overwrite output file if exists
+                '-i', video_path,
+                '-c', 'copy',
+                '-an',  # Remove audio
+                output_path
+            ]
+
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            if progress_queue:
+                progress_queue.put({'type': 'status', 'message': 'Audio removal in progress...'})
+
+            # Monitor process output
+            while True:
+                if cancel_event and cancel_event.is_set():
+                    logger.info("Audio removal cancelled during process")
+                    process.terminate()
+                    process.wait(timeout=1)
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                    return
+                line = process.stderr.readline()
+                if not line and process.poll() is not None:
+                    break
+                # Optionally, parse progress here if needed
+
+            if process.returncode != 0:
+                error_output = process.stderr.read()
+                logger.error(f"FFmpeg audio removal failed: {error_output}", exc_info=True)
+                raise FFmpegError(f"FFmpeg audio removal failed: {error_output}")
+            else:
+                if progress_queue:
+                    progress_queue.put({'type': 'status', 'message': 'Audio removed. Finalizing download...'})
+        except Exception as e:
+            logger.error(f"Error during audio removal: {str(e)}", exc_info=True)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            raise
+    
+    @staticmethod
     def get_playlist_urls(url: str) -> list[str]:
         """Get all video URLs from a playlist"""
         ydl_opts = {
@@ -488,7 +549,7 @@ class YouTubeDownloader:
             logger.debug(f"{stream_type.title()} download options: {options}")
             # Add status message before starting download
             if stream_type == 'video':
-                progress_queue.put({'type': 'status', 'message': f'Downloading video and audio...'})
+                progress_queue.put({'type': 'status', 'message': f'Downloading video...'})
             progress_queue.put({'type': 'status', 'message': f'Downloading {stream_type}...'})
             def progress_hook(d):
                 if cancel_event.is_set():
@@ -520,7 +581,9 @@ class YouTubeDownloader:
         download_folder: str,
         video_quality: str,
         audio_quality: str,
-        audio_only: bool,
+        audio_enabled: bool,
+        video_enabled: bool,
+        muxing_enabled: bool,
         progress_queue: Any,
         cancel_event: Event
     ):
@@ -546,44 +609,48 @@ class YouTubeDownloader:
             temp_dir.mkdir(exist_ok=True)
             
             # Set up queues for progress monitoring
-            video_queue = mp.Queue() if not audio_only else None
-            audio_queue = mp.Queue()
+            video_queue = mp.Queue() if video_enabled else None
+            audio_queue = mp.Queue() if audio_enabled else None
             
             # Create unique temp filenames
-            video_temp = None if audio_only else temp_dir / f"video_{uuid.uuid4()}.mp4"
-            audio_temp = temp_dir / f"audio_{uuid.uuid4()}.m4a"
+            video_temp = None if not video_enabled else temp_dir / f"video_{uuid.uuid4()}.mp4"
+            audio_temp = None if not audio_enabled else temp_dir / f"audio_{uuid.uuid4()}.m4a"
             
             # Create video options if needed
             video_opts = None
-            if not audio_only:
+            if video_enabled:
                 # Get target height from video quality
                 target_height = int(video_quality.split('p')[0]) if 'p' in video_quality else 0
                 video_opts = {
-                    'format': f'bestvideo[height<={target_height}][ext=mp4]',
+                    'format': f'bestvideo[height<={target_height}][ext=mp4][vcodec!*=none]',
                     'outtmpl': str(video_temp),
+                    'quiet': True,
+                    'no_warnings': True,
+                    'postprocessors': []  # Ensure no post-processing that might add audio
+                }
+            
+            # Create audio options if needed
+            audio_opts = None
+            if audio_enabled:
+                audio_opts = {
+                    'format': 'bestaudio[ext=m4a]',
+                    'outtmpl': str(audio_temp),
                     'quiet': True,
                     'no_warnings': True
                 }
             
-            # Create audio options
-            audio_opts = {
-                'format': 'bestaudio[ext=m4a]',
-                'outtmpl': str(audio_temp),
-                'quiet': True,
-                'no_warnings': True
-            }
-            
             # Start processes list
             processes = []
             
-            # Start audio download
-            progress_queue.put({'type': 'status', 'message': 'Downloading...'})
-            audio_process = Process(
-                target=YouTubeDownloader.download_stream,
-                args=(url, audio_opts, 'audio', progress_queue, cancel_event)
-            )
-            audio_process.start()
-            processes.append(audio_process)
+            # Start audio download if needed
+            if audio_opts:
+                progress_queue.put({'type': 'status', 'message': 'Downloading...'})
+                audio_process = Process(
+                    target=YouTubeDownloader.download_stream,
+                    args=(url, audio_opts, 'audio', progress_queue, cancel_event)
+                )
+                audio_process.start()
+                processes.append(audio_process)
             
             # Start video download if needed
             if video_opts:
@@ -602,7 +669,7 @@ class YouTubeDownloader:
                     # Clean up temp files
                     if video_temp and video_temp.exists():
                         video_temp.unlink()
-                    if audio_temp.exists():
+                    if audio_temp and audio_temp.exists():
                         audio_temp.unlink()
                     return  # Exit early if any process failed
                     
@@ -611,7 +678,7 @@ class YouTubeDownloader:
                 # Clean up temp files
                 if video_temp and video_temp.exists():
                     video_temp.unlink()
-                if audio_temp.exists():
+                if audio_temp and audio_temp.exists():
                     audio_temp.unlink()
                 progress_queue.put({
                     'type': 'cancelled',
@@ -622,16 +689,30 @@ class YouTubeDownloader:
             # Create output path
             title = info.get('title', url)
             safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            extension = ".m4a" if audio_only else ".mp4"
-            base_output_path = Path(download_folder) / f"{safe_title}{extension}"
-            output_path = ensure_unique_path(base_output_path)
             
-            # Mux files if needed
-            if not audio_only:
+            # Determine output file type based on what's being downloaded
+            if muxing_enabled:
+                # Muxing: download both, mux, keep only muxed file
+                if not video_temp or not video_temp.exists():
+                    progress_queue.put({
+                        'type': 'error',
+                        'error': 'Video download failed - no video file found'
+                    })
+                    return
+                if not audio_temp or not audio_temp.exists():
+                    progress_queue.put({
+                        'type': 'error',
+                        'error': 'Audio download failed - no audio file found'
+                    })
+                    return
                 logger.info(f"Merging files to: {output_path}")
                 progress_queue.put({'type': 'status', 'message': 'Merging audio and video streams...'})
                 try:
                     YouTubeDownloader.mux_files(video_temp, audio_temp, str(output_path), progress_queue, cancel_event)
+                    progress_queue.put({
+                        'type': 'complete',
+                        'file_path': str(output_path)
+                    })
                 except Exception as e:
                     if str(e) == "Muxing cancelled":
                         progress_queue.put({
@@ -644,16 +725,76 @@ class YouTubeDownloader:
                     # Clean up temp files
                     if video_temp and video_temp.exists():
                         video_temp.unlink()
-                    if audio_temp.exists():
+                    if audio_temp and audio_temp.exists():
                         audio_temp.unlink()
-            else:
-                # For audio only, just rename the temp file
-                os.rename(audio_temp, str(output_path))
+                    # Remove separate audio file if it exists
+                    audio_file = Path(download_folder) / f"{safe_title}_audio.m4a"
+                    if audio_file.exists():
+                        audio_file.unlink()
+            elif video_enabled and audio_enabled:
+                # Download both, remove audio from video, save both separately
+                video_output = Path(download_folder) / f"{safe_title}_video.mp4"
+                audio_output = Path(download_folder) / f"{safe_title}_audio.m4a"
+                video_output = ensure_unique_path(video_output)
+                audio_output = ensure_unique_path(audio_output)
+                if video_temp and video_temp.exists():
+                    temp_noaudio = temp_dir / f"video_noaudio_{uuid.uuid4()}.mp4"
+                    try:
+                        YouTubeDownloader.remove_audio(str(video_temp), str(temp_noaudio), progress_queue, cancel_event)
+                        os.rename(temp_noaudio, str(video_output))
+                        video_temp.unlink()
+                    except Exception as e:
+                        progress_queue.put({
+                            'type': 'error',
+                            'error': f'Audio removal failed: {str(e)}'
+                        })
+                if audio_temp and audio_temp.exists():
+                    os.rename(audio_temp, str(audio_output))
                 progress_queue.put({
-                    'type': 'status', 'message': 'Finalizing download...'} )
+                    'type': 'status', 'message': 'Finalizing download...'})
                 progress_queue.put({
-                    'type': 'complete'
+                    'type': 'complete',
+                    'file_path': [str(video_output), str(audio_output)]
                 })
+            elif video_enabled and not audio_enabled:
+                # Download video, remove audio, save as mp4
+                if video_temp and video_temp.exists():
+                    temp_noaudio = temp_dir / f"video_noaudio_{uuid.uuid4()}.mp4"
+                    try:
+                        YouTubeDownloader.remove_audio(str(video_temp), str(temp_noaudio), progress_queue, cancel_event)
+                        os.rename(temp_noaudio, str(output_path))
+                        video_temp.unlink()
+                        progress_queue.put({
+                            'type': 'status', 'message': 'Finalizing download...'})
+                        progress_queue.put({
+                            'type': 'complete',
+                            'file_path': str(output_path)
+                        })
+                    except Exception as e:
+                        progress_queue.put({
+                            'type': 'error',
+                            'error': f'Audio removal failed: {str(e)}'
+                        })
+                else:
+                    progress_queue.put({
+                        'type': 'error',
+                        'error': 'Video download failed - no video file found'
+                    })
+            elif audio_enabled and not video_enabled:
+                # Download audio only
+                if audio_temp and audio_temp.exists():
+                    os.rename(audio_temp, str(output_path))
+                    progress_queue.put({
+                        'type': 'status', 'message': 'Finalizing download...'})
+                    progress_queue.put({
+                        'type': 'complete',
+                        'file_path': str(output_path)
+                    })
+                else:
+                    progress_queue.put({
+                        'type': 'error',
+                        'error': 'Audio download failed - no audio file found'
+                    })
             
         except Exception as e:
             if isinstance(e, YouTubeError) and "Download cancelled" in str(e):

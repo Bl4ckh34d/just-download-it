@@ -20,6 +20,7 @@ from downloader.youtube_downloader import YouTubeDownloader
 from utils import ensure_unique_path
 from utils.utils_ui import is_youtube_url, get_filename_from_url
 import uuid
+import os
 
 logger = Logger.get_logger(__name__)
 
@@ -112,6 +113,11 @@ class MainWindow:
             logger.debug("Creating main window")
             self.root = ctk.CTk()
             self.root.title("JustDownloadIt")
+            
+            # Set minimum window size to prevent UI elements from being squished
+            self.root.minsize(600, 600)
+            
+            # Set initial geometry to minimum width and reasonable height
             self.root.geometry("600x800")
             self.root.update_idletasks()  # Force geometry update
             
@@ -383,23 +389,19 @@ class MainWindow:
                 next_interval = 10 if not updates else 50
                 self.root.after(next_interval, self._update_progress)
                 
-    def _create_download_widget(self, title: str, url: str = "") -> str:
+    def _create_download_widget(self, title: str, url: str = "", file_type: str = "file") -> str:
         """Create a new download widget"""
-        logger.info(f"Creating download widget for: {title}")
-        
-        # Create widget
+        logger.info(f"Creating download widget for: {title} (type: {file_type})")
         widget = DownloadWidget(
             self.downloads_frame,
             url=url,
             title=title,
-            on_cancel=self._cancel_download
+            on_cancel=self._cancel_download,
+            file_type=file_type
         )
         widget.pack(fill="x", padx=5, pady=2)
-        
-        # Store widget
         self.downloads[widget.id] = widget
         logger.info(f"Download widget created: {widget.id}")
-        
         return widget.id
         
     def _cancel_download(self, widget_id: str):
@@ -420,33 +422,23 @@ class MainWindow:
     def _download_file(self, widget_id: str, url: str, settings: dict):
         """Download regular file"""
         try:
-            # Get widget by ID
             if widget_id not in self.downloads:
                 logger.error(f"No widget found for ID: {widget_id}")
                 return
             widget = self.downloads[widget_id]
-                
-            # Create a queue for progress updates
             progress_queue = mp.Queue()
-            
             try:
-                # Start download process
                 process_id = self.process_pool.start_process(
                     FileDownloader.download,
                     args=(url, str(settings['download_folder']), progress_queue, self.download_threads)
                 )
-                
-                # Store process ID in widget
                 self.active_downloads.add(process_id)
-                widget.process_id = process_id  # Store process ID in widget for cancellation
-                
-                # Start monitoring progress
+                widget.process_id = process_id
                 threading.Thread(
                     target=self._monitor_download_progress,
                     args=(widget, process_id, progress_queue),
                     daemon=True
                 ).start()
-                
             except RuntimeError as e:
                 if "Maximum number of processes" in str(e):
                     self.pending_downloads.append((widget_id, url, settings))
@@ -455,7 +447,6 @@ class MainWindow:
                     self._update_download_counts()
                     return
                 raise
-                    
         except requests.exceptions.ConnectionError:
             logger.error(f"Failed to connect to URL: {url}", exc_info=True)
             messagebox.showerror("Connection Error", f"Could not connect to {url}. Please check if the URL is correct and accessible.")
@@ -520,16 +511,12 @@ class MainWindow:
             widget.show_audio_progress()  # Always show audio progress
             if has_video:
                 widget.show_video_progress()  # Only show video progress if not audio-only
-                
             is_muxing = False  # Track if we're in muxing phase
             widget.set_status("Downloading...")  # Initial status
-                
             while True:
                 try:
                     progress = progress_queue.get(timeout=0.1)
-                    
                     if progress['type'] == 'title':
-                        # Update widget title when we get video info
                         widget.update_title(progress['title'])
                     elif progress['type'] == 'video_progress':
                         data = progress.get('data', {})
@@ -562,14 +549,12 @@ class MainWindow:
                         widget.set_status(f"Error: {progress['error']}")
                         widget.is_completed = True
                         widget.is_cancelled = True
-                        widget.cancel_btn.configure(text="Clear")
                         self._clear_download(process_id)
                         break
                     elif progress['type'] == 'cancelled':
                         widget.set_status("Download cancelled")
                         widget.is_completed = True
                         widget.is_cancelled = True
-                        widget.cancel_btn.configure(text="Clear")
                         self._clear_download(process_id)
                         break
                     elif progress['type'] == 'complete':
@@ -579,27 +564,21 @@ class MainWindow:
                             widget.set_status(progress.get('message', 'Finished!'))  # Use message if provided
                         widget.is_completed = True
                         widget.is_cancelled = True
-                        widget.cancel_btn.configure(text="Clear")
                         self._clear_download(process_id)
                         break
-                        
                 except queue.Empty:
-                    # Check if process is still running
                     if not self.process_pool.is_process_running(process_id):
                         if not is_muxing:  # Only show failure if not in muxing phase
                             widget.set_status("Download failed")
                             widget.is_completed = True
                             widget.is_cancelled = True
-                            widget.cancel_btn.configure(text="Clear")
                             self._clear_download(process_id)
                             break
-                        
         except Exception as e:
             logger.error(f"Error monitoring progress: {str(e)}", exc_info=True)
             widget.set_status(f"Error: {str(e)}")
             widget.is_completed = True
             widget.is_cancelled = True
-            widget.cancel_btn.configure(text="Clear")
             self._clear_download(process_id)
             
     def _monitor_download_progress(
@@ -610,31 +589,26 @@ class MainWindow:
     ):
         """Monitor progress of file download"""
         try:
-            # Show audio progress bar since we're downloading a single file
-            widget.show_audio_progress()
-            
+            widget.show_file_progress()
             last_update_time = 0
-            MIN_UPDATE_INTERVAL = 0.05  # Minimum 50ms between updates
-            
+            MIN_UPDATE_INTERVAL = 0.05
             while process_id in self.active_downloads:
                 try:
-                    # Try to get progress update
-                    progress = progress_queue.get(timeout=0.5)  # Longer timeout to reduce CPU usage
-                    
+                    progress = progress_queue.get(timeout=0.5)
                     current_time = time.time()
                     if progress['type'] == 'progress':
-                        # Only forward progress updates if enough time has passed
                         if current_time - last_update_time >= MIN_UPDATE_INTERVAL:
                             data = progress.get('data', {})
-                            widget.update_audio_progress(
+                            widget.update_file_progress(
                                 data.get('progress', 0),
                                 data.get('speed', '0MB/s'),
                                 data.get('downloaded', '0MB'),
                                 data.get('total', '0MB')
                             )
                             last_update_time = current_time
+                    elif progress['type'] == 'status':
+                        widget.set_status(progress.get('message', ''))
                     elif progress['type'] == 'title':
-                        # Update widget title when we get file info
                         widget.update_title(progress['title'])
                     elif progress['type'] == 'error':
                         widget.set_status(f"Error: {progress['error']}")
@@ -657,9 +631,7 @@ class MainWindow:
                         widget.cancel_btn.configure(text="Clear")
                         self._clear_download(process_id)
                         break
-                        
                 except queue.Empty:
-                    # Check if process is still running
                     if not self.process_pool.is_process_running(process_id):
                         widget.set_status("Download failed")
                         widget.is_completed = True
@@ -667,7 +639,6 @@ class MainWindow:
                         widget.cancel_btn.configure(text="Clear")
                         self._clear_download(process_id)
                         break
-                        
         except Exception as e:
             logger.error(f"Error monitoring progress: {str(e)}", exc_info=True)
             widget.set_status(f"Error: {str(e)}")
@@ -791,7 +762,17 @@ class MainWindow:
             
     def _start_single_download(self, url: str, settings: dict):
         """Start or queue a single download"""
-        # Create widget with format info in title
+        import mimetypes
+        ext = os.path.splitext(url.split('?')[0])[1].lower()
+        mime, _ = mimetypes.guess_type(url)
+        if is_youtube_url(url):
+            file_type = 'audio' if settings['audio_only'] else 'video'
+        elif mime and mime.startswith('video'):
+            file_type = 'video'
+        elif mime and mime.startswith('audio'):
+            file_type = 'audio'
+        else:
+            file_type = 'file'
         title = get_filename_from_url(url)
         if is_youtube_url(url):
             format_info = "Audio" if settings['audio_only'] else "Video"
@@ -800,32 +781,18 @@ class MainWindow:
             else:
                 format_info += f" ({settings['video_quality']}, {settings['audio_quality']})"
             title = f"{title} - {format_info}"
-            
-        # Create widget and store it using its UUID
-        widget = DownloadWidget(
-            self.downloads_frame,
-            url=url,
-            title=title,
-            on_cancel=self._cancel_download
-        )
-        widget.pack(fill="x", padx=5, pady=2)
-        self.downloads[widget.id] = widget
-        
+        widget_id = self._create_download_widget(title, url, file_type=file_type)
         if len(self.active_downloads) < self.process_pool.max_processes:
-            # Start download immediately
             if is_youtube_url(url):
-                self._download_youtube(widget.id, url, settings)
+                self._download_youtube(widget_id, url, settings)
             else:
-                self._download_file(widget.id, url, settings)
+                self._download_file(widget_id, url, settings)
         else:
-            # Otherwise queue it
-            self.pending_downloads.append((widget.id, url, settings))
+            self.pending_downloads.append((widget_id, url, settings))
+            widget = self.downloads[widget_id]
             widget.set_status("Waiting for available slot...")
-            # Hide progress frame for queued downloads
             widget.hide_progress_frame()
-            # Start checking for pending downloads
             self.root.after(1000, self._check_pending_downloads)
-        
         self._update_download_counts()
             
     def _start_downloads(self):

@@ -256,13 +256,11 @@ def handle_progress(d: dict, queue: Optional[Queue]):
     """Handle download progress updates"""
     if queue is None:
         return
-        
     try:
         if d['status'] == 'downloading':
-            total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
-            downloaded = d.get('downloaded_bytes', 0)
+            total = max(0, d.get('total_bytes') or d.get('total_bytes_estimate', 0))
+            downloaded = max(0, min(d.get('downloaded_bytes', 0), total))
             speed = d.get('speed', 0)
-            
             if total > 0:
                 progress = {
                     'percent': (downloaded / total) * 100,
@@ -271,7 +269,6 @@ def handle_progress(d: dict, queue: Optional[Queue]):
                     'downloaded': downloaded
                 }
                 queue.put(progress)
-                
     except Exception as e:
         logger.error(f"Error handling progress: {str(e)}", exc_info=True)
 
@@ -463,16 +460,14 @@ class YouTubeDownloader:
         """Progress hook for stream downloads"""
         if d['status'] == 'downloading':
             try:
-                total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
-                downloaded = d.get('downloaded_bytes', 0)
+                total = max(0, d.get('total_bytes') or d.get('total_bytes_estimate', 0))
+                downloaded = max(0, min(d.get('downloaded_bytes', 0), total))
                 speed = d.get('speed', 0)
-                
-                if total and downloaded:
+                if total and downloaded >= 0:
                     progress = (downloaded / total) * 100
                     speed_str = f"{speed/1024/1024:.1f} MB/s" if speed else ""
                     downloaded_str = f"{downloaded/1024/1024:.1f} MB"
                     total_str = f"{total/1024/1024:.1f} MB"
-                    
                     progress_queue.put({
                         'type': f'{stream_type}_progress',
                         'data': {
@@ -491,18 +486,15 @@ class YouTubeDownloader:
         try:
             logger.info(f"Starting {stream_type} download for {url}")
             logger.debug(f"{stream_type.title()} download options: {options}")
-            
-            # Create a custom progress hook that checks for cancellation
+            # Add status message before starting download
+            progress_queue.put({'type': 'status', 'message': f'Downloading {stream_type}...'})
             def progress_hook(d):
                 if cancel_event.is_set():
                     raise Exception("Download cancelled")
                 YouTubeDownloader.stream_progress_hook(d, stream_type, progress_queue)
-                
             options['progress_hooks'] = [progress_hook]
-            
             with yt_dlp.YoutubeDL(options) as ydl:
                 ydl.download([url])
-                
             logger.info(f"Finished {stream_type} download")
             
         except Exception as e:
@@ -583,7 +575,7 @@ class YouTubeDownloader:
             processes = []
             
             # Start audio download
-            progress_queue.put({'type': 'status', 'message': 'Downloading audio stream...'})
+            progress_queue.put({'type': 'status', 'message': 'Downloading...'})
             audio_process = Process(
                 target=YouTubeDownloader.download_stream,
                 args=(url, audio_opts, 'audio', progress_queue, cancel_event)
@@ -593,10 +585,10 @@ class YouTubeDownloader:
             
             # Start video download if needed
             if video_opts:
-                progress_queue.put({'type': 'status', 'message': 'Downloading video stream...'})
+                progress_queue.put({'type': 'status', 'message': 'Downloading...'})
                 video_process = Process(
                     target=YouTubeDownloader.download_stream,
-                    args=(url, video_opts, 'video', progress_queue, cancel_event)
+                    args=(url, video_opts, 'video and audio', progress_queue, cancel_event)
                 )
                 video_process.start()
                 processes.append(video_process)

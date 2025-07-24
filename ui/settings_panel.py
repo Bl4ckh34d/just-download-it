@@ -31,7 +31,11 @@ class SettingsPanel(ctk.CTkFrame):
             folder_frame = ctk.CTkFrame(self)
             folder_frame.pack(fill="x", padx=10, pady=5)
             
-            ctk.CTkLabel(folder_frame, text="Download Folder:").pack(
+            # Create a frame for the label and entry (left side)
+            left_frame = ctk.CTkFrame(folder_frame, fg_color="transparent")
+            left_frame.pack(side="left", fill="x", expand=True, padx=5)
+            
+            ctk.CTkLabel(left_frame, text="Download Folder:").pack(
                 side="left", padx=5
             )
             
@@ -39,19 +43,30 @@ class SettingsPanel(ctk.CTkFrame):
             default_path = Path(__file__).parent.parent / "downloads"
             self.folder_var = ctk.StringVar(value=str(default_path))
             folder_entry = ctk.CTkEntry(
-                folder_frame,
-                textvariable=self.folder_var,
-                width=300
+                left_frame,
+                textvariable=self.folder_var
             )
-            folder_entry.pack(side="left", padx=5)
+            folder_entry.pack(side="left", fill="x", expand=True, padx=5)
+            
+            # Create a frame for the buttons (right side)
+            button_frame = ctk.CTkFrame(folder_frame, fg_color="transparent")
+            button_frame.pack(side="right", padx=5)
             
             browse_btn = ctk.CTkButton(
-                folder_frame,
+                button_frame,
                 text="Browse",
                 width=70,
                 command=self._browse_folder
             )
-            browse_btn.pack(side="left", padx=5)
+            browse_btn.pack(side="left", padx=2)
+            # Add Open button next to Browse
+            open_folder_btn = ctk.CTkButton(
+                button_frame,
+                text="Open",
+                width=70,
+                command=self._open_download_folder
+            )
+            open_folder_btn.pack(side="left", padx=2)
             logger.debug(f"Initial download folder: {self.folder_var.get()}")
             
             # Max concurrent downloads selection
@@ -80,22 +95,30 @@ class SettingsPanel(ctk.CTkFrame):
             thread_frame = ctk.CTkFrame(self)
             thread_frame.pack(fill="x", padx=10, pady=5)
             
-            ctk.CTkLabel(thread_frame, text="Download Threads (Regular Downloads):").pack(
-                side="left", padx=5
+            # Create a frame for the label (left side)
+            thread_label_frame = ctk.CTkFrame(thread_frame, fg_color="transparent")
+            thread_label_frame.pack(side="left", padx=5)
+            
+            ctk.CTkLabel(thread_label_frame, text="Download Threads (Regular Downloads):").pack(
+                side="left"
             )
+            
+            # Create a frame for the slider and count (right side)
+            thread_control_frame = ctk.CTkFrame(thread_frame, fg_color="transparent")
+            thread_control_frame.pack(side="right", padx=5)
             
             self.thread_var = ctk.IntVar(value=4)
             thread_slider = ctk.CTkSlider(
-                thread_frame,
+                thread_control_frame,
                 from_=1,
                 to=8,
                 number_of_steps=7,
                 variable=self.thread_var,
                 command=self._on_thread_change
             )
-            thread_slider.pack(side="left", expand=True, padx=5)
+            thread_slider.pack(side="left", padx=5)
             
-            thread_label = ctk.CTkLabel(thread_frame, textvariable=self.thread_var)
+            thread_label = ctk.CTkLabel(thread_control_frame, textvariable=self.thread_var)
             thread_label.pack(side="left", padx=5)
             logger.debug(f"Initial thread count: {self.thread_var.get()}")
             
@@ -190,6 +213,24 @@ class SettingsPanel(ctk.CTkFrame):
             if self.on_folder_change:
                 self.on_folder_change(Path(folder))
                 
+    def _open_download_folder(self):
+        """Open the selected download folder in the OS file explorer"""
+        import os
+        import subprocess
+        folder = self.folder_var.get()
+        if os.path.exists(folder):
+            try:
+                if os.name == 'nt':
+                    os.startfile(folder)
+                elif os.name == 'posix':
+                    subprocess.Popen(['xdg-open', folder])
+                else:
+                    subprocess.Popen(['open', folder])
+            except Exception as e:
+                logger.error(f"Failed to open folder: {str(e)}", exc_info=True)
+        else:
+            logger.debug("Open folder button clicked but folder does not exist.")
+            
     def _on_thread_change(self, value):
         """Handle thread count change"""
         threads = int(float(value))  # Convert from float to int

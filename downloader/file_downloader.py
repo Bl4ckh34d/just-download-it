@@ -85,32 +85,35 @@ class FileDownloader:
             downloaded = mp.Value('i', 0)
             lock = threading.Lock()
             start_time = time.time()
-            
+
+            # Notify UI that download is starting
+            progress_queue.put({'type': 'status', 'message': f'Starting download with {thread_count} threads...'})
+
             def download_chunk(chunk_info):
                 chunk_start, chunk_end = chunks[chunk_info[0]]
                 temp_file = chunk_info[1]
-                
+                logger.debug(f"Thread {chunk_info[0]} downloading bytes {chunk_start}-{chunk_end}")
                 headers = {'Range': f'bytes={chunk_start}-{chunk_end}'}
                 response = session.get(url, headers=headers, stream=True)
-                
                 with open(temp_file, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=FileDownloader.CHUNK_SIZE):
                         if chunk:
                             f.write(chunk)
                             with lock:
-                                downloaded.value += len(chunk)
+                                prev_downloaded = downloaded.value
+                                downloaded.value = max(0, min(downloaded.value + len(chunk), total_size))
+                                logger.debug(f"Thread {chunk_info[0]} wrote {len(chunk)} bytes, prev_downloaded={prev_downloaded}, new_downloaded={downloaded.value}")
+                                if downloaded.value < 0 or downloaded.value > total_size:
+                                    logger.warning(f"[BUG] downloaded.value out of bounds: {downloaded.value} (total_size={total_size})")
                                 elapsed = time.time() - start_time
                                 speed = downloaded.value / elapsed if elapsed > 0 else 0
-                                
-                                # Format values for progress
                                 speed_str = f"{speed/1024/1024:.1f}MB/s"
-                                downloaded_str = f"{downloaded.value/1024/1024:.1f}MB"
+                                downloaded_str = f"{max(0, min(downloaded.value, total_size))/1024/1024:.1f}MB"
                                 total_str = f"{total_size/1024/1024:.1f}MB"
-                                
                                 progress = {
                                     'type': 'progress',
                                     'data': {
-                                        'progress': (downloaded.value / total_size) * 100,
+                                        'progress': (max(0, min(downloaded.value, total_size)) / total_size) * 100 if total_size > 0 else 0,
                                         'speed': speed_str,
                                         'downloaded': downloaded_str,
                                         'total': total_str
@@ -122,7 +125,7 @@ class FileDownloader:
                                     temp_file.unlink()
                                     return
                             
-            progress_queue.put({'type': 'status', 'message': f'Starting download with {thread_count} threads...'})
+            progress_queue.put({'type': 'status', 'message': 'Downloading...'})
             # Download chunks in parallel
             with ThreadPoolExecutor(max_workers=thread_count) as executor:
                 executor.map(download_chunk, enumerate(temp_files))
@@ -172,32 +175,28 @@ class FileDownloader:
                         'message': 'Download cancelled'
                     })
                     return
-                    
+                
                 if chunk:
                     f.write(chunk)
-                    downloaded += len(chunk)
-                    
+                    downloaded = max(0, min(downloaded + len(chunk), total_size))
                     if total_size > 0:
                         # Calculate speed and progress
                         elapsed = time.time() - start_time
                         speed = downloaded / elapsed if elapsed > 0 else 0
-                        
                         # Format values
                         speed_str = f"{speed/1024/1024:.1f}MB/s"
-                        downloaded_str = f"{downloaded/1024/1024:.1f}MB"
+                        downloaded_str = f"{max(0, min(downloaded, total_size))/1024/1024:.1f}MB"
                         total_str = f"{total_size/1024/1024:.1f}MB"
-                        
                         progress = {
                             'type': 'progress',
                             'data': {
-                                'progress': (downloaded / total_size) * 100,
+                                'progress': (max(0, min(downloaded, total_size)) / total_size) * 100 if total_size > 0 else 0,
                                 'speed': speed_str,
                                 'downloaded': downloaded_str,
                                 'total': total_str
                             }
                         }
                         progress_queue.put(progress)
-                        
                         # Only log every 5% to reduce spam
                         if int(progress['data']['progress']) % 5 == 0:
                             logger.debug(

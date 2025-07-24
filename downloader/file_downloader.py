@@ -30,6 +30,7 @@ class FileDownloader:
             logger.info(f"Starting download from {url}")
             progress_queue.put({'type': 'status', 'message': 'Initializing download...'})
             
+            progress_queue.put({'type': 'status', 'message': 'Resolving filename and preparing download...'})
             # Create destination folder if it doesn't exist
             os.makedirs(dest_folder, exist_ok=True)
             
@@ -38,6 +39,7 @@ class FileDownloader:
             dest_path = Path(dest_folder) / filename
             logger.debug(f"Destination path: {dest_path}")
             
+            progress_queue.put({'type': 'status', 'message': 'Connecting to server...'})
             # Create session with browser cookies
             session = requests.Session()
             try:
@@ -58,6 +60,7 @@ class FileDownloader:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             })
             
+            progress_queue.put({'type': 'status', 'message': 'Checking file metadata...'})
             # Send HEAD request to get content length
             response = session.head(url, allow_redirects=True)
             total_size = int(response.headers.get('content-length', 0))
@@ -65,6 +68,7 @@ class FileDownloader:
             if total_size == 0:
                 # If size unknown or too small, fall back to single thread download
                 logger.warning("File size unknown or too small, falling back to single thread download")
+                progress_queue.put({'type': 'status', 'message': 'File size unknown, downloading as single stream...'})
                 FileDownloader._single_thread_download(session, url, dest_path, total_size, progress_queue, cancel_event)
                 return
                 
@@ -118,10 +122,12 @@ class FileDownloader:
                                     temp_file.unlink()
                                     return
                             
+            progress_queue.put({'type': 'status', 'message': f'Starting download with {thread_count} threads...'})
             # Download chunks in parallel
             with ThreadPoolExecutor(max_workers=thread_count) as executor:
                 executor.map(download_chunk, enumerate(temp_files))
             
+            progress_queue.put({'type': 'status', 'message': 'Combining downloaded chunks...'})
             # Combine all chunks
             with open(dest_path, 'wb') as dest:
                 for temp_file in temp_files:
@@ -132,6 +138,7 @@ class FileDownloader:
                         temp_file.unlink()
             
             logger.info("Download completed successfully")
+            progress_queue.put({'type': 'status', 'message': 'Finalizing download...'})
             progress_queue.put({'type': 'complete'})
             
         except Exception as e:
@@ -148,6 +155,7 @@ class FileDownloader:
     def _single_thread_download(session: requests.Session, url: str, dest_path: Path,
                               total_size: int, progress_queue: Any, cancel_event: mp.Event = None):
         """Fallback method for single-threaded download"""
+        progress_queue.put({'type': 'status', 'message': 'Connecting and starting single-threaded download...'})
         response = session.get(url, stream=True)
         response.raise_for_status()
         
@@ -199,6 +207,7 @@ class FileDownloader:
                             )
             
             logger.info("Download completed successfully")
+            progress_queue.put({'type': 'status', 'message': 'Finalizing download...'})
             progress_queue.put({'type': 'complete'})
             
     @staticmethod

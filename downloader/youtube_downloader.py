@@ -315,6 +315,8 @@ class YouTubeDownloader:
             if cancel_event and cancel_event.is_set():
                 logger.info("Muxing cancelled before starting")
                 return
+            if progress_queue:
+                progress_queue.put({'type': 'status', 'message': 'Starting muxing process...'})
                 
             # Get total duration from file before starting
             probe_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audio_path]
@@ -347,6 +349,8 @@ class YouTubeDownloader:
                 stderr=subprocess.PIPE,
                 universal_newlines=True
             )
+            if progress_queue:
+                progress_queue.put({'type': 'status', 'message': 'Muxing in progress...'})
             
             # Monitor process output
             while True:
@@ -402,6 +406,8 @@ class YouTubeDownloader:
             else:
                 # Send completion message
                 if progress_queue:
+                    progress_queue.put({
+                        'type': 'status', 'message': 'Finalizing download...'})
                     progress_queue.put({
                         'type': 'complete',
                         'message': 'Finished!'
@@ -527,6 +533,7 @@ class YouTubeDownloader:
         """Standalone process for downloading YouTube videos"""
         try:
             logger.info(f"Starting YouTube download process for {url}")
+            progress_queue.put({'type': 'status', 'message': 'Fetching video information...'})
             
             # Get video info
             with yt_dlp.YoutubeDL() as ydl:
@@ -538,6 +545,7 @@ class YouTubeDownloader:
                 'type': 'title',
                 'title': title
             })
+            progress_queue.put({'type': 'status', 'message': 'Preparing download streams...'})
             
             # Create temp directory for downloads
             temp_dir = Path(download_folder) / ".temp"
@@ -575,6 +583,7 @@ class YouTubeDownloader:
             processes = []
             
             # Start audio download
+            progress_queue.put({'type': 'status', 'message': 'Downloading audio stream...'})
             audio_process = Process(
                 target=YouTubeDownloader.download_stream,
                 args=(url, audio_opts, 'audio', progress_queue, cancel_event)
@@ -584,6 +593,7 @@ class YouTubeDownloader:
             
             # Start video download if needed
             if video_opts:
+                progress_queue.put({'type': 'status', 'message': 'Downloading video stream...'})
                 video_process = Process(
                     target=YouTubeDownloader.download_stream,
                     args=(url, video_opts, 'video', progress_queue, cancel_event)
@@ -625,6 +635,7 @@ class YouTubeDownloader:
             # Mux files if needed
             if not audio_only:
                 logger.info(f"Merging files to: {output_path}")
+                progress_queue.put({'type': 'status', 'message': 'Merging audio and video streams...'})
                 try:
                     YouTubeDownloader.mux_files(video_temp, audio_temp, str(output_path), progress_queue, cancel_event)
                 except Exception as e:
@@ -644,6 +655,8 @@ class YouTubeDownloader:
             else:
                 # For audio only, just rename the temp file
                 os.rename(audio_temp, str(output_path))
+                progress_queue.put({
+                    'type': 'status', 'message': 'Finalizing download...'} )
                 progress_queue.put({
                     'type': 'complete'
                 })

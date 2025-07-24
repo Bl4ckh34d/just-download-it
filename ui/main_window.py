@@ -450,7 +450,7 @@ class MainWindow:
             except RuntimeError as e:
                 if "Maximum number of processes" in str(e):
                     self.pending_downloads.append((widget_id, url, settings))
-                    widget.set_status("Queued")
+                    widget.set_status("Waiting for available slot...")
                     logger.debug(f"Queued download for later: {url}")
                     self._update_download_counts()
                     return
@@ -497,7 +497,7 @@ class MainWindow:
             except RuntimeError as e:
                 if "Maximum number of processes" in str(e):
                     self.pending_downloads.append((widget_id, url, settings))
-                    widget.set_status("Queued")
+                    widget.set_status("Waiting for available slot...")
                     logger.debug(f"Queued download for later: {url}")
                     self._update_download_counts()
                     return
@@ -820,7 +820,7 @@ class MainWindow:
         else:
             # Otherwise queue it
             self.pending_downloads.append((widget.id, url, settings))
-            widget.set_status("Queued")
+            widget.set_status("Waiting for available slot...")
             # Hide progress frame for queued downloads
             widget.hide_progress_frame()
             # Start checking for pending downloads

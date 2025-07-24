@@ -96,7 +96,7 @@ class DownloadWidget(ctk.CTkFrame):
         
         self.status_label = ctk.CTkLabel(
             status_frame,
-            text="Starting download...",
+            text="Preparing download...",
             anchor="w"
         )
         self.status_label.pack(side="left", padx=5)

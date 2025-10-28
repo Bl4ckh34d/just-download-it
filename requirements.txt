@@ -1,4 +1,5 @@
-yt-dlp>=2025.07.21
+# Pin yt-dlp to a commit that includes the latest YouTube signature fixes
+yt-dlp @ git+https://github.com/yt-dlp/yt-dlp.git@6d05cee4df30774ddce5c5c751fd2118f40c24fe
 pySmartDL>=1.3.4
 browser-cookie3>=0.19.1
 customtkinter==5.2.1

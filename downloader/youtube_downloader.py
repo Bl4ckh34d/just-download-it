@@ -14,6 +14,42 @@ from utils import ensure_unique_path
 
 logger = Logger.get_logger(__name__)
 
+try:
+    from yt_dlp.version import __version__ as yt_dlp_version
+except Exception:  # pragma: no cover - fallback if version metadata missing
+    yt_dlp_version = "0.0.0"
+
+REQUIRED_YTDLP_VERSION = (2025, 10, 22)
+_version_checked = False
+
+
+def _parse_version(version_str: str) -> tuple[int, ...]:
+    """Convert a version string like '2025.10.22' into a comparable tuple."""
+    parts = []
+    for part in version_str.split('.'):
+        try:
+            parts.append(int(part))
+        except ValueError:
+            break
+    return tuple(parts)
+
+
+def ensure_supported_yt_dlp() -> None:
+    """
+    Ensure the installed yt-dlp version contains the latest YouTube signature fixes.
+    Raises a DownloadError with an actionable message if the version is too old.
+    """
+    global _version_checked
+    if _version_checked:
+        return
+    current = _parse_version(yt_dlp_version)
+    if current < REQUIRED_YTDLP_VERSION:
+        raise DownloadError(
+            "Your yt-dlp installation is too old for YouTube audio downloads. "
+            "Please reinstall using the pinned git commit from requirements.txt."
+        )
+    _version_checked = True
+
 def clean_filename(filename: str) -> str:
     """Clean filename from invalid characters and normalize Unicode characters"""
     # Normalize Unicode characters (NFKD form converts special characters to their ASCII equivalents where possible)
@@ -31,6 +67,7 @@ def clean_filename(filename: str) -> str:
 
 def get_video_info(url: str) -> Dict[str, Any]:
     """Get video information including available formats"""
+    ensure_supported_yt_dlp()
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -180,6 +217,7 @@ def download_video(
 ) -> Tuple[Optional[str], str]:
     """Download video from YouTube"""
     try:
+        ensure_supported_yt_dlp()
         # Get video info first
         info = get_video_info(url)
         
@@ -545,6 +583,7 @@ class YouTubeDownloader:
     def download_stream(url: str, options: dict, stream_type: str, progress_queue: Any, cancel_event: Event):
         """Download a single stream (video or audio)"""
         try:
+            ensure_supported_yt_dlp()
             logger.info(f"Starting {stream_type} download for {url}")
             logger.debug(f"{stream_type.title()} download options: {options}")
             # Add status message before starting download
